@@ -116,9 +116,29 @@
   (match p
     [(Program info e) (Program info (rco-exp e))]))
 
+(define (explicate-tail e)
+  (match e
+    [(Let x rhs body)
+     (define-values (body-cont body-vars) (explicate-tail body))
+     (define-values (rhs-cont rhs-vars) (explicate-assign rhs x body-cont))
+     (values rhs-cont (append body-vars rhs-vars))]
+    [else (values (Return e) '())]))
+
+(define (explicate-assign e x cont)
+  (match e
+    [(Let y rhs body)
+     (define-values (body-cont body-vars) (explicate-assign body x cont))
+     (define-values (rhs-cont rhs-vars) (explicate-assign rhs y body-cont))
+     (values rhs-cont (append body-vars rhs-vars))]
+    [else (values (Seq (Assign (Var x) e) cont) (list x))]))
+
 ;; explicate-control : Lvar^mon -> Cvar
 (define (explicate-control p)
-  (error "TODO: code goes here (explicate-control)"))
+  (match p
+    [(Program info e)
+     (define-values (cont vars) (explicate-tail e))
+     (CProgram `((locals . ,vars))
+               `((start . ,cont)))]))
 
 ;; select-instructions : Cvar -> x86var
 (define (select-instructions p)
@@ -144,7 +164,7 @@
      ;; Uncomment the following passes as you finish them.
      ("uniquify" ,uniquify ,interp-Lvar ,type-check-Lvar)
      ("remove complex opera*" ,remove-complex-opera* ,interp-Lvar ,type-check-Lvar)
-     ;; ("explicate control" ,explicate-control ,interp-Cvar ,type-check-Cvar)
+     ("explicate control" ,explicate-control ,interp-Cvar ,type-check-Cvar)
      ;; ("instruction selection" ,select-instructions ,interp-x86-0)
      ;; ("assign homes" ,assign-homes ,interp-x86-0)
      ;; ("patch instructions" ,patch-instructions ,interp-x86-0)
