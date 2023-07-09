@@ -4,6 +4,7 @@
 (require "interp-Lint.rkt")
 (require "interp-Lvar.rkt")
 (require "interp-Cvar.rkt")
+(require "interp.rkt")
 (require "type-check-Lvar.rkt")
 (require "type-check-Cvar.rkt")
 (require "utilities.rkt")
@@ -140,9 +141,92 @@
      (CProgram `((locals . ,vars))
                `((start . ,cont)))]))
 
+(define (select-atm e)
+  (match e
+    [(Int n) (Imm n)]
+    [(Var x) e]
+    [(Reg r) e]
+    [else (error "select-atm unhandled case " e)]))
+
+(define (select-stmt-sum se)
+  (match se
+    [(Assign dest (Prim _
+                        (list dest
+                              other)))
+     (list (Instr 'addq (list (select-atm other) dest)))]
+
+    [(Assign dest (Prim _
+                        (list other
+                              dest)))
+     (list (Instr 'addq (list (select-atm other) dest)))]
+
+    [(Assign dest (Prim _ (list op1 op2)))
+     (list (Instr 'movq (list (select-atm op1) dest))
+           (Instr 'addq (list (select-atm op2) dest)))]
+
+    [else (error "select-stmt-sum unhandled case " se)]))
+
+(define (select-stmt-dif de)
+  (match de
+    [(Assign dest (Prim _
+                        (list dest
+                              other)))
+     (list (Instr 'subq (list (select-atm other) dest)))]
+
+    [(Assign dest (Prim _ (list op1 op2)))
+     (list (Instr 'movq (list (select-atm op1) dest))
+           (Instr 'subq (list (select-atm op2) dest)))]
+
+    [(Assign dest (Prim _ (list op)))
+     (list (Instr 'movq (list (select-atm op) dest))
+           (Instr 'negq (list dest)))]
+
+    [else (error "select-stmt-dif unhandled case " de)]))
+
+(define (select-stmt-read re)
+  (match re
+    [(Assign dest _)
+     (list (Callq 'read_int 0)
+           (Instr 'movq (list (Reg 'rax) dest)))]
+    [else (error "select-stmt-read unhandled case " re)]))
+
+(define (select-stmt-atm e)
+  (match e
+    [(Assign dest atm)
+     (list (Instr 'movq (list (select-atm atm) dest)))]
+    [else (error "select-stmt-atm unhandled case " e)]))
+
+(define (select-stmt-return re)
+  (match re
+    [(Reg 'rax)
+     (list (Jmp 'conclusion))]
+    [else
+     (append (select-stmt (Assign (Reg 'rax) re))
+             (list (Jmp 'conclusion)))]))
+
+(define (select-stmt e)
+  (match e
+    [(Assign _ (Prim '+ l)) (select-stmt-sum e)]
+    [(Assign _ (Prim '- l)) (select-stmt-dif e)]
+    [(Assign _ (Prim 'read '())) (select-stmt-read e)]
+    [(Assign _ atm) (select-stmt-atm e)]
+    [(Return e) (select-stmt-return e)]
+    [else (error "select-stmt unhandled case " e)]))
+
+(define (select-tail e)
+  (match e
+    [(Return _) (select-stmt e)]
+    [(Seq se t) (append (select-stmt se) (select-tail t))]
+    [else (error "select-tail unhandled case " e)]))
+
 ;; select-instructions : Cvar -> x86var
 (define (select-instructions p)
-  (error "TODO: code goes here (select-instructions)"))
+  (match p
+    [(CProgram info cblocks)
+     (X86Program info
+                 (for/list ([label-block cblocks])
+                   (cons (car label-block)
+                         (Block '() (select-tail (cdr label-block))))))]))
 
 ;; assign-homes : x86var -> x86var
 (define (assign-homes p)
@@ -165,7 +249,7 @@
      ("uniquify" ,uniquify ,interp-Lvar ,type-check-Lvar)
      ("remove complex opera*" ,remove-complex-opera* ,interp-Lvar ,type-check-Lvar)
      ("explicate control" ,explicate-control ,interp-Cvar ,type-check-Cvar)
-     ;; ("instruction selection" ,select-instructions ,interp-x86-0)
+     ("instruction selection" ,select-instructions ,interp-x86-0)
      ;; ("assign homes" ,assign-homes ,interp-x86-0)
      ;; ("patch instructions" ,patch-instructions ,interp-x86-0)
      ;; ("prelude-and-conclusion" ,prelude-and-conclusion ,interp-x86-0)
