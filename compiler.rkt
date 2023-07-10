@@ -1,6 +1,7 @@
 #lang racket
 (require racket/set racket/stream)
 (require racket/fixnum)
+(require srfi/1)
 (require "interp-Lint.rkt")
 (require "interp-Lvar.rkt")
 (require "interp-Cvar.rkt")
@@ -228,9 +229,49 @@
                    (cons (car label-block)
                          (Block '() (select-tail (cdr label-block))))))]))
 
+(define (assign-homes-operands operands locals-shifts)
+  (for/list ([operand operands])
+    (match operand
+      [(Var x)
+       (define home (dict-ref locals-shifts x))
+       (Deref (car home) (cadr home))]
+      [else operand])))
+
+(define (assign-homes-stack block locals-shifts)
+  (for/list ([instr block])
+    (match instr
+      [(Instr name operands)
+       (Instr name (assign-homes-operands operands locals-shifts))]
+      [else instr])))
+
+(define (compute-stack-shifts locals-types)
+  (for/list ([lc locals-types]
+             [shift (iota (length locals-types) -8 -8)])
+    (list (car lc) 'rbp shift)))
+
+(define (compute-stack-space locals-types)
+  (define sizes
+    (for/list ([lc locals-types])
+      (match (cdr lc)
+        [Integer 8]
+        [else (error "compute-stack-space unhandled case " lc)])))
+  (define total (foldl + 0 sizes))
+  (+ total (remainder total 16)))
+
 ;; assign-homes : x86var -> x86var
 (define (assign-homes p)
-  (error "TODO: code goes here (assign-homes)"))
+  (match p
+    [(X86Program info blocks)
+     (define locals-types (dict-ref info 'locals-types))
+     (define locals-shifts (compute-stack-shifts locals-types))
+     (define stack-space (compute-stack-space locals-types))
+     (X86Program (cons `(stack-space . ,stack-space) info)
+                 (for/list ([block blocks])
+                   (match block
+                     [(cons label (Block i instructions))
+                      (cons label (Block i (assign-homes-stack instructions
+                                                               locals-shifts)))]
+                     [else (error "assign-homes unhandled case " block)])))]))
 
 ;; patch-instructions : x86var -> x86int
 (define (patch-instructions p)
@@ -250,7 +291,7 @@
      ("remove complex opera*" ,remove-complex-opera* ,interp-Lvar ,type-check-Lvar)
      ("explicate control" ,explicate-control ,interp-Cvar ,type-check-Cvar)
      ("instruction selection" ,select-instructions ,interp-x86-0)
-     ;; ("assign homes" ,assign-homes ,interp-x86-0)
+     ("assign homes" ,assign-homes ,interp-x86-0)
      ;; ("patch instructions" ,patch-instructions ,interp-x86-0)
      ;; ("prelude-and-conclusion" ,prelude-and-conclusion ,interp-x86-0)
      ))
