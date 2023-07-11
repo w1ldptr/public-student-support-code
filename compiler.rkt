@@ -273,9 +273,40 @@
                                                                locals-shifts)))]
                      [else (error "assign-homes unhandled case " block)])))]))
 
+(define (patch-instruction instr)
+  (match instr
+    [(Instr i (list (Deref reg1 shift1)
+                    (Deref reg2 shift2)))
+     (list (Instr 'movq (list (Deref reg1 shift1) (Reg 'rax)))
+           (Instr i (list (Reg 'rax) (Deref reg2 shift2))))]
+
+    [(Instr i (list (Imm val) (Deref reg shift)))
+     #:when (>= val (expt 2 16))
+     (list (Instr 'movq (list (Imm val) (Reg 'rax)))
+           (Instr i (list (Reg 'rax) (Deref reg shift))))]
+
+    [(Instr i (list (Deref reg shift) (Imm val)))
+     #:when (>= val (expt 2 16))
+     (list (Instr 'movq (list (Imm val) (Reg 'rax)))
+           (Instr i (list (Deref reg shift) (Reg 'rax))))]
+
+    [else (list instr)]))
+
+(define (patch-instructions-list instr-list)
+  (define instr-lists (map patch-instruction instr-list))
+  (flatten instr-lists))
+
 ;; patch-instructions : x86var -> x86int
 (define (patch-instructions p)
-  (error "TODO: code goes here (patch-instructions)"))
+  (match p
+    [(X86Program info blocks)
+     (X86Program info
+                 (for/list ([block blocks])
+                   (match block
+                     [(cons label (Block block-info instructions))
+                      (cons label (Block block-info
+                                         (patch-instructions-list instructions)))]
+                     [else (error "patch-instructions unhandled case " block)])))]))
 
 ;; prelude-and-conclusion : x86int -> x86int
 (define (prelude-and-conclusion p)
@@ -292,6 +323,6 @@
      ("explicate control" ,explicate-control ,interp-Cvar ,type-check-Cvar)
      ("instruction selection" ,select-instructions ,interp-x86-0)
      ("assign homes" ,assign-homes ,interp-x86-0)
-     ;; ("patch instructions" ,patch-instructions ,interp-x86-0)
+     ("patch instructions" ,patch-instructions ,interp-x86-0)
      ;; ("prelude-and-conclusion" ,prelude-and-conclusion ,interp-x86-0)
      ))
