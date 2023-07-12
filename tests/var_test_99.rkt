@@ -1,0 +1,6 @@
+(+ (let ([a 1])
+     (let ([b (read)])
+       (let ([c 2])
+         (let ([d (read)])
+           (+ a (+ b (+ c d)))))))
+   (read))
