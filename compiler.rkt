@@ -41,14 +41,22 @@
     [((Int n1) (Int n2)) (Int (fx+ n1 n2))]
     [(_ _) (Prim '+ (list r1 r2))]))
 
+(define (pe-sub r1 r2)
+  (match* (r1 r2)
+    [((Int n1) (Int n2)) (Int (fx- n1 n2))]
+    [(_ _) (Prim '- (list r1 r2))]))
+
 (define (pe-exp e)
   (match e
     [(Int n) (Int n)]
+    [(Var x) (Var x)]
     [(Prim 'read '()) (Prim 'read '())]
     [(Prim '- (list e1)) (pe-neg (pe-exp e1))]
-    [(Prim '+ (list e1 e2)) (pe-add (pe-exp e1) (pe-exp e2))]))
+    [(Prim '+ (list e1 e2)) (pe-add (pe-exp e1) (pe-exp e2))]
+    [(Prim '- (list e1 e2)) (pe-sub (pe-exp e1) (pe-exp e2))]
+    [(Let rval lval exp) (Let rval (pe-exp lval) (pe-exp exp))]))
 
-(define (pe-Lint p)
+(define (pe-Lvar p)
   (match p
     [(Program info e) (Program info (pe-exp e))]))
 
@@ -340,6 +348,7 @@
 ;; must be named "compiler.rkt"
 (define compiler-passes
   `(
+    ("partial evaluation" ,pe-Lvar ,interp-Lvar ,type-check-Lvar)
      ;; Uncomment the following passes as you finish them.
      ("uniquify" ,uniquify ,interp-Lvar ,type-check-Lvar)
      ("remove complex opera*" ,remove-complex-opera* ,interp-Lvar ,type-check-Lvar)
