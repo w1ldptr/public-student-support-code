@@ -34,17 +34,35 @@
 (define (pe-neg r)
   (match r
     [(Int n) (Int (fx- 0 n))]
+    [(Prim '- (list e)) e]
+    [(Prim '+ (list e1 e2)) (Prim '+ (list (pe-neg e1) (pe-neg e2)))]
     [else (Prim '- (list r))]))
 
 (define (pe-add r1 r2)
   (match* (r1 r2)
     [((Int n1) (Int n2)) (Int (fx+ n1 n2))]
+    [((Int n1) (Prim '+ (list (Int n2) e))) (Prim '+ (list (Int (fx+ n1 n2)) e))]
+    [((Prim '+ (list (Int n2) e)) (Int n1)) (Prim '+ (list (Int (fx+ n1 n2)) e))]
+
+    [((Prim '+ (list (Int n1) e1)) (Prim '+ (list (Int n2) e2)))
+     (Prim '+ (list (Int (fx+ n1 n2)) (Prim '+ (list e1 e2))))]
+
+    [(e (Int n)) (Prim '+ (list (Int n) e))]
     [(_ _) (Prim '+ (list r1 r2))]))
 
 (define (pe-sub r1 r2)
   (match* (r1 r2)
     [((Int n1) (Int n2)) (Int (fx- n1 n2))]
-    [(_ _) (Prim '- (list r1 r2))]))
+    [((Int n1) (Prim '+ (list (Int n2) e)))
+     (Prim '+ (list (Int (fx- n1 n2)) (Prim '- (list e))))]
+    [((Prim '+ (list (Int n2) e)) (Int n1))
+     (Prim '+ (list (Int (fx- n2 n1)) e))]
+
+    [((Prim '+ (list (Int n1) e1)) (Prim '+ (list (Int n2) e2)))
+     (Prim '+ (list (Int (fx- n1 n2)) (Prim '+ (list e1 (pe-neg e2)))))]
+
+    [(e (Int n)) (Prim '+ (list (pe-neg (Int n)) e))]
+    [(_ _) (Prim '+ (list r1 (pe-neg r2)))]))
 
 (define (pe-exp e)
   (match e
