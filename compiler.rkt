@@ -361,6 +361,77 @@
      (X86Program info
                  (cons main (append blocks (list conclusion))))]))
 
+(define (instr-r-set instr)
+  (match instr
+    [(Instr 'movq (list (Reg src) _)) (set (Reg src))]
+    [(Instr 'movq (list (Var src) _)) (set (Var src))]
+    [(Instr 'movq _) (set)]
+    [(Instr _ (list (Imm imm) dst)) (set)]
+    [(Instr _ (list src dst)) (set src dst)]
+    [(Instr 'negq (list op)) (set op)]
+    [(Instr 'pushq (list op))
+     (define s (set 'rsp))
+     (match op
+       [(Reg r) (set-add s op)]
+       [(Var r) (set-add s op)]
+       [else s])]
+    [(Instr 'popq _) (set (Reg 'rsp))]
+    [(Callq _ arity)
+     (define args (list (Reg 'rdi) (Reg 'rsi) (Reg 'rdx) (Reg 'rcx) (Reg 'r8) (Reg 'r9)))
+     (list->set (if (< arity 6) (take args arity) args))]
+    [(Retq) (set (Reg 'rax))]
+    [else (set)]))
+
+(define (instr-w-set instr)
+  (match instr
+    [(Instr _ (list src dst)) (set dst)]
+    [(Instr 'negq (list op)) (set op)]
+    [(Instr 'pushq _) (set (Reg 'rsp))]
+    [(Instr 'popq (list dst)) (set (Reg 'rsp) dst)]
+    [(Callq _ arity)
+     (set (Reg 'rax) (Reg 'rcx) (Reg 'rdx) (Reg 'rsi) (Reg 'rdi) (Reg 'r8) (Reg 'r9) (Reg 'r10) (Reg 'r11))]
+    [else (set)]))
+
+(define (block-liveness block label->live)
+  (match block
+    [(Block info instr-list)
+     (define initial
+       (match (last instr-list)
+         [(Jmp label) (list (dict-ref label->live label))]
+         [else (list (set))]))
+     (define liveness
+       (for/foldr ([sets initial])
+                  ([instr instr-list])
+         (define Lafter (car sets))
+         (define Lbefore (set-union (instr-r-set instr)
+                                    (set-subtract Lafter
+                                                  (instr-w-set instr))))
+         (cons Lbefore sets)))
+     (Block (cons (cons 'live liveness) info)
+            instr-list)]))
+
+(define (uncover-live-blocks blocks)
+  (for/foldr ([label->live (list (cons 'conclusion
+                                        (set (Reg 'rax) (Reg 'rsp))))] ;;XXX
+              [processed-blocks '()]
+              #:result processed-blocks)
+             ([label&block blocks])
+    (match label&block
+      [(cons label block)
+       (define new-block-liveness (block-liveness block label->live))
+       (define new-label->live
+         (match new-block-liveness
+           [(Block (cons (cons 'live liveness) _) instr-list)
+            (cons (cons label (car liveness)) label->live)]))
+       (define new-processed-blocks (cons (cons label new-block-liveness)
+                                          processed-blocks))
+       (values new-label->live new-processed-blocks)])))
+
+(define (uncover-live p)
+  (match p
+    [(X86Program info blocks)
+     (X86Program info (uncover-live-blocks blocks))]))
+
 ;; Define the compiler passes to be used by interp-tests and the grader
 ;; Note that your compiler file (the file that defines the passes)
 ;; must be named "compiler.rkt"
@@ -372,6 +443,7 @@
      ("remove complex opera*" ,remove-complex-opera* ,interp-Lvar ,type-check-Lvar)
      ("explicate control" ,explicate-control ,interp-Cvar ,type-check-Cvar)
      ("instruction selection" ,select-instructions ,interp-x86-0)
+     ("uncover-live" ,uncover-live ,interp-x86-0)
      ("assign homes" ,assign-homes ,interp-x86-0)
      ("patch instructions" ,patch-instructions ,interp-x86-0)
      ("prelude-and-conclusion" ,prelude-and-conclusion ,interp-x86-0)
