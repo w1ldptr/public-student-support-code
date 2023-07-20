@@ -1,6 +1,7 @@
 #lang racket
 (require racket/set racket/stream)
 (require racket/fixnum)
+(require graph)
 (require srfi/1)
 (require "interp-Lint.rkt")
 (require "interp-Lvar.rkt")
@@ -432,6 +433,56 @@
     [(X86Program info blocks)
      (X86Program info (uncover-live-blocks blocks))]))
 
+(define (interference-rule1 dst Lafter ig)
+  (for/set ([i Lafter]) (add-edge! ig dst i)))
+
+(define (interference-rule2 Wk Lafter ig)
+  (for/set ([d Wk])
+    (for/set ([v Lafter]
+              #:when (not (equal? d v)))
+      (add-edge! ig d v))))
+
+(define (interference-instr instr Lafter ig)
+  (match instr
+    [(Instr 'movq (list (Imm _) dst))
+     (interference-rule1 dst (set-remove Lafter dst) ig)]
+    [(Instr 'movq (list src dst))
+     (interference-rule1 dst (set-remove (set-remove Lafter src) dst) ig)]
+    [(Instr i _)
+     (interference-rule2 (instr-w-set instr) Lafter ig)]
+    [(Callq f a)
+     (interference-rule2 (instr-w-set instr) Lafter ig)]
+    [else (void)]))
+
+(define (build-interference-blocks blocks)
+  (define interference-graph (unweighted-graph/undirected '()))
+
+  (for ([block blocks])
+    (match block
+      [(cons _ (Block block-info instrs))
+       (define liveness (cdr (dict-ref block-info 'live)))
+       (for ([instr instrs]
+             [Lafter liveness])
+         (interference-instr instr Lafter interference-graph))]))
+  interference-graph)
+
+(define (output-interference-graph name graph)
+  (define output (open-output-file (symbol->string name)
+                                   #:mode 'text
+                                   #:exists 'replace))
+  (graphviz graph
+            #:output output))
+
+(define (build-interference p)
+  (match p
+    [(X86Program info l&b)
+     (define ig (build-interference-blocks l&b))
+     ;; DEBUG beg
+     ;; (output-interference-graph 'PROG ig)
+     ;; end
+     (X86Program (cons (cons 'conflicts ig) info)
+                 l&b)]))
+
 ;; Define the compiler passes to be used by interp-tests and the grader
 ;; Note that your compiler file (the file that defines the passes)
 ;; must be named "compiler.rkt"
@@ -444,6 +495,7 @@
      ("explicate control" ,explicate-control ,interp-Cvar ,type-check-Cvar)
      ("instruction selection" ,select-instructions ,interp-x86-0)
      ("uncover-live" ,uncover-live ,interp-x86-0)
+     ("build-interference" ,build-interference ,interp-x86-0)
      ("assign homes" ,assign-homes ,interp-x86-0)
      ("patch instructions" ,patch-instructions ,interp-x86-0)
      ("prelude-and-conclusion" ,prelude-and-conclusion ,interp-x86-0)
