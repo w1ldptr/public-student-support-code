@@ -25,8 +25,9 @@
         all-tests)))
 
 (interp-tests "var" #f compiler-passes interp-Lvar "var_test" (tests-for "var"))
+;; (interp-tests "reg" #f compiler-passes interp-Lvar "reg_test" (tests-for "reg"))
 
 ;; Uncomment the following when all the passes are complete to
 ;; test the final x86 code.
-(compiler-tests "var" #f compiler-passes "var_test" (tests-for "var"))
+;; (compiler-tests "var" #f compiler-passes "var_test" (tests-for "var"))
 

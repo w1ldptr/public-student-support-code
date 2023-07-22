@@ -2,7 +2,6 @@
 (require racket/set racket/stream)
 (require racket/fixnum)
 (require graph)
-(require srfi/1)
 (require "interp-Lint.rkt")
 (require "interp-Lvar.rkt")
 (require "interp-Cvar.rkt")
@@ -10,6 +9,7 @@
 (require "type-check-Lvar.rkt")
 (require "type-check-Cvar.rkt")
 (require "utilities.rkt")
+(require "priority_queue.rkt")
 (provide (all-defined-out))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -256,50 +256,6 @@
                    (cons (car label-block)
                          (Block '() (select-tail (cdr label-block))))))]))
 
-(define (assign-homes-operands operands locals-shifts)
-  (for/list ([operand operands])
-    (match operand
-      [(Var x)
-       (define home (dict-ref locals-shifts x))
-       (Deref (car home) (cadr home))]
-      [else operand])))
-
-(define (assign-homes-stack block locals-shifts)
-  (for/list ([instr block])
-    (match instr
-      [(Instr name operands)
-       (Instr name (assign-homes-operands operands locals-shifts))]
-      [else instr])))
-
-(define (compute-stack-shifts locals-types)
-  (for/list ([lc locals-types]
-             [shift (iota (length locals-types) -8 -8)])
-    (list (car lc) 'rbp shift)))
-
-(define (compute-stack-space locals-types)
-  (define sizes
-    (for/list ([lc locals-types])
-      (match (cdr lc)
-        [Integer 8]
-        [else (error "compute-stack-space unhandled case " lc)])))
-  (define total (foldl + 0 sizes))
-  (+ total (remainder total 16)))
-
-;; assign-homes : x86var -> x86var
-(define (assign-homes p)
-  (match p
-    [(X86Program info blocks)
-     (define locals-types (dict-ref info 'locals-types))
-     (define locals-shifts (compute-stack-shifts locals-types))
-     (define stack-space (compute-stack-space locals-types))
-     (X86Program (cons `(stack-space . ,stack-space) info)
-                 (for/list ([block blocks])
-                   (match block
-                     [(cons label (Block i instructions))
-                      (cons label (Block i (assign-homes-stack instructions
-                                                               locals-shifts)))]
-                     [else (error "assign-homes unhandled case " block)])))]))
-
 (define (patch-instruction instr)
   (match instr
     [(Instr i (list (Deref reg1 shift1)
@@ -466,22 +422,151 @@
          (interference-instr instr Lafter interference-graph))]))
   interference-graph)
 
-(define (output-interference-graph name graph)
+(define (output-interference-graph name ig mapping)
   (define output (open-output-file (symbol->string name)
                                    #:mode 'text
                                    #:exists 'replace))
-  (graphviz graph
-            #:output output))
+  (define coloring (make-hash))
+  (for ([v (get-vertices ig)])
+    (define item (hash-ref mapping v))
+    (define color (PqItem-color item))
+    (hash-set! coloring
+               v
+               (+ color 5)))
+  (graphviz ig
+            #:output output
+            #:colors coloring))
 
 (define (build-interference p)
   (match p
     [(X86Program info l&b)
      (define ig (build-interference-blocks l&b))
      ;; DEBUG beg
-     ;; (output-interference-graph 'PROG ig)
+     ;; (define-values (mapping pq) (init-pq ig))
+     ;; (pre-saturate-pq ig mapping pq)
+     ;; (color-graph-exec ig mapping pq)
+     ;; (displayln "DEBUG")
+     ;; (hash-for-each mapping
+     ;;                (lambda (key node) (displayln node)))
+     ;; (output-interference-graph 'PROG ig mapping)
+     ;; (displayln "END DEBUG")
      ;; end
      (X86Program (cons (cons 'conflicts ig) info)
                  l&b)]))
+
+(define reg-to-color '((rax . -1) (rsp . -2) (rbp . -3) (r11 . -4) (r15 . -5)
+                                  (rcx . 0) (rdx . 1) (rsi . 2) (rdi . 3) (r8 . 4) (r9 . 5)
+                                  (r10 . 6) (rbx . 7) (r12 . 8) (r13 . 9) (r14 . 10)))
+(define color-to-reg '((0 . rcx ) (1 . rdx) (2 . rsi) (3 . rdi) (4 . r8) (5 . r9) (6 . r10)
+                                  (7 . rbx) (8 . r12) (9 . r13) (10 . r14)))
+
+(struct PqItem (key color saturation node) #:transparent #:mutable)
+(define (cmp-PqItems i1 i2)
+  (>= (set-count (PqItem-saturation i1)) (set-count (PqItem-saturation i2))))
+
+(define (notify-neighbors ig mapping pq item)
+  (define color (PqItem-color item))
+  (for ([n (get-neighbors ig (PqItem-key item))])
+    (define neigh-item (hash-ref mapping n))
+    (set-add! (PqItem-saturation neigh-item) color)
+
+    (define neigh-node (PqItem-node item))
+    (when (and neigh-node (not (PqItem-color neigh-item)))
+      (pqueue-decrease-key! pq neigh-node))))
+
+(define (init-pq ig)
+  (define mapping (make-hash))
+  (define pq (make-pqueue cmp-PqItems))
+
+  (for ([v (get-vertices ig)])
+    (define item (PqItem v #f (mutable-set) #f))
+    (hash-set! mapping v item)
+    (match v
+      [(Reg r)
+       #:when (dict-ref reg-to-color r #f)
+       (define color (dict-ref reg-to-color r))
+       (set-PqItem-color! item color)]
+      [(Reg r)
+       (error "init-pq unmapped register " r)]
+      [else
+       (set-PqItem-node! item (pqueue-push! pq item))]))
+
+  (values mapping pq))
+
+(define (pre-saturate-pq ig mapping pq)
+  (for ([v (get-vertices ig)])
+    (match v
+      [(Reg r)
+       (define item (hash-ref mapping v))
+       (notify-neighbors ig mapping pq item)]
+      [else #f])))
+
+(define (chose-item pq)
+  (pqueue-pop! pq))
+
+(define (chose-color ig mapping pq item start)
+  (if (set-member? (PqItem-saturation item) start)
+      (chose-color ig mapping pq item (+ start 1))
+      (begin
+        (set-PqItem-color! item start)
+        (notify-neighbors ig mapping pq item))))
+
+(define (color-graph-exec ig mapping pq)
+  (when (> (pqueue-count pq) 0)
+    (begin
+      (chose-color ig mapping pq (chose-item pq) 0)
+      (color-graph-exec ig mapping pq))))
+
+(define (assign-var-home color var)
+  (if (< color (length color-to-reg))
+      (cons var (Reg (dict-ref color-to-reg color)))
+      (let* ([n-stack (- color (length color-to-reg))]
+             [shift (* -8 (+ 1 n-stack))])
+        (cons var (Deref 'rbp shift)))))
+
+(define (assign-var-homes mapping vars)
+  (for/list ([var vars])
+    (define color (PqItem-color (hash-ref mapping (Var var))))
+    (assign-var-home color var)))
+
+(define (color-graph ig vars)
+  (define-values (mapping pq) (init-pq ig))
+  (pre-saturate-pq ig mapping pq)
+  (color-graph-exec ig mapping pq)
+  (assign-var-homes mapping vars))
+
+(define (assign-homes-operands operands mapping)
+  (for/list ([operand operands])
+    (match operand
+      [(Var x) (dict-ref mapping x)]
+      [else operand])))
+
+(define (assign-homes-from-alist instrs mapping)
+  (for/list ([instr instrs])
+    (match instr
+      [(Instr name operands)
+       (Instr name (assign-homes-operands operands mapping))]
+      [else instr])))
+
+(define (compute-stack-space mapping)
+  (define shifts
+    (for/list ([m mapping])
+      (match (cdr m)
+        [(Deref 'rbp shift) (+ 8 (fx- 0 shift))]
+        [else 0])))
+  (foldl max 0 shifts))
+
+(define (allocate-registers p)
+  (match p
+    [(X86Program info (list (cons 'start (Block bi instructions))))
+     (define conflicts (dict-ref info 'conflicts))
+     (define vars (dict-ref info 'locals))
+     (define block-homes (color-graph conflicts vars))
+     (define stack-space (compute-stack-space block-homes))
+     (X86Program (cons `(stack-space . ,stack-space) info)
+                 (list (cons 'start (Block bi
+                                           (assign-homes-from-alist instructions
+                                                                    block-homes)))))]))
 
 ;; Define the compiler passes to be used by interp-tests and the grader
 ;; Note that your compiler file (the file that defines the passes)
@@ -496,7 +581,7 @@
      ("instruction selection" ,select-instructions ,interp-x86-0)
      ("uncover-live" ,uncover-live ,interp-x86-0)
      ("build-interference" ,build-interference ,interp-x86-0)
-     ("assign homes" ,assign-homes ,interp-x86-0)
+     ("allocate registers" ,allocate-registers ,interp-x86-0)
      ("patch instructions" ,patch-instructions ,interp-x86-0)
      ("prelude-and-conclusion" ,prelude-and-conclusion ,interp-x86-0)
      ))

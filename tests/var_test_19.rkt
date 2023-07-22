@@ -1,0 +1,8 @@
+(let ([a 1])
+  (let ([b 4])
+    (let ([c 35])
+      (let ([f (+ (let ([d b])
+                    (+ a d))
+                  (let ([e c])
+                    (+ a e)))])
+        (+ a f)))))
