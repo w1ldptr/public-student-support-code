@@ -294,30 +294,53 @@
                                          (patch-instructions-list instructions)))]
                      [else (error "patch-instructions unhandled case " block)])))]))
 
-(define (prelude-instrs stack-space label)
-  (list
-   (Instr 'pushq (list (Reg 'rbp)))
-   (Instr 'movq (list (Reg 'rsp) (Reg 'rbp)))
-   (Instr 'subq (list (Imm stack-space) (Reg 'rsp)))
-   (Jmp label)))
+(define (prelude-instrs stack-space used-callee label)
+  (define stack-frame
+    (list
+     (Instr 'pushq (list (Reg 'rbp)))
+     (Instr 'movq (list (Reg 'rsp) (Reg 'rbp)))))
+  (define rem (remainder (+ stack-space (* 8 (length used-callee))) 16))
+  (define locals
+    (list
+     (Instr 'subq (list (Imm (+ rem stack-space)) (Reg 'rsp)))))
+  (define callee-saved
+    (for/list ([reg used-callee])
+      (Instr 'pushq (list (Reg reg)))))
+  (define cont
+    (list
+     (Jmp label)))
 
-(define (conclusion-instrs stack-space)
-  (list
-   (Instr 'addq (list (Imm stack-space) (Reg 'rsp)))
-   (Instr 'popq (list (Reg 'rbp)))
-   (Retq)))
+  (append stack-frame locals callee-saved cont))
+
+(define (conclusion-instrs stack-space used-callee)
+  (define callee-saved
+    (for/list ([reg (reverse used-callee)])
+      (Instr 'popq (list (Reg reg)))))
+  (define rem (remainder (+ stack-space (* 8 (length used-callee))) 16))
+  (define locals
+    (list
+     (Instr 'addq (list (Imm (+ rem stack-space)) (Reg 'rsp)))))
+  (define stack-frame
+    (list
+     (Instr 'popq (list (Reg 'rbp)))))
+  (define cont
+    (list
+     (Retq)))
+
+  (append callee-saved locals stack-frame cont))
 
 ;; prelude-and-conclusion : x86int -> x86int
 (define (prelude-and-conclusion p)
   (match p
     [(X86Program info blocks)
      (define stack-space (dict-ref info 'stack-space))
+     (define used-callee (set->list (dict-ref info 'used_callee)))
      (define main (cons 'main
                          (Block '()
-                                 (prelude-instrs stack-space 'start))))
+                                 (prelude-instrs stack-space used-callee 'start))))
      (define conclusion (cons 'conclusion
                                (Block '()
-                                       (conclusion-instrs stack-space))))
+                                       (conclusion-instrs stack-space used-callee))))
      (X86Program info
                  (cons main (append blocks (list conclusion))))]))
 
@@ -462,6 +485,7 @@
                                   (r10 . 6) (rbx . 7) (r12 . 8) (r13 . 9) (r14 . 10)))
 (define color-to-reg '((0 . rcx ) (1 . rdx) (2 . rsi) (3 . rdi) (4 . r8) (5 . r9) (6 . r10)
                                   (7 . rbx) (8 . r12) (9 . r13) (10 . r14)))
+(define calee-saved-regs '(rbp rsp rbx r12 r13 r14))
 
 (struct PqItem (key color saturation node) #:transparent #:mutable)
 (define (cmp-PqItems i1 i2)
@@ -559,6 +583,15 @@
         [else 0])))
   (foldl max 0 shifts))
 
+(define (compute-used-callee mapping)
+  (for/fold ([used (set)])
+            ([m mapping])
+    (match (cdr m)
+      [(Reg r)
+       #:when (member r calee-saved-regs)
+       (set-add used r)]
+      [else used])))
+
 (define (allocate-registers p)
   (match p
     [(X86Program info (list (cons 'start (Block bi instructions))))
@@ -566,7 +599,10 @@
      (define vars (dict-ref info 'locals))
      (define block-homes (color-graph conflicts vars))
      (define stack-space (compute-stack-space block-homes))
-     (X86Program (cons `(stack-space . ,stack-space) info)
+     (define used-callee (compute-used-callee block-homes))
+     (X86Program (cons `(stack-space . ,stack-space)
+                       (cons `(used_callee . ,used-callee)
+                             info))
                  (list (cons 'start (Block bi
                                            (assign-homes-from-alist instructions
                                                                     block-homes)))))]))
