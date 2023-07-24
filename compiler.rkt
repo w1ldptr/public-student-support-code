@@ -258,6 +258,9 @@
 
 (define (patch-instruction instr)
   (match instr
+    [(Instr 'movq (list op op))
+     '()]
+
     [(Instr i (list (Deref reg1 shift1)
                     (Deref reg2 shift2)))
      (list (Instr 'movq (list (Deref reg1 shift1) (Reg 'rax)))
