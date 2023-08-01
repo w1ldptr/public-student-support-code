@@ -448,6 +448,22 @@
          (interference-instr instr Lafter interference-graph))]))
   interference-graph)
 
+(define (parse-move-instr instr mg)
+  (match instr
+    [(Instr 'movq (list (Var v1) (Var v2)))
+     (add-edge! mg (Var v1) (Var v2))]
+    [else #f]))
+
+(define (build-move-blocks blocks)
+  (define move-graph (unweighted-graph/undirected '()))
+
+  (for ([block blocks])
+    (match block
+      [(cons _ (Block _ instrs))
+       (for ([instr instrs])
+         (parse-move-instr instr move-graph))]))
+  move-graph)
+
 (define (output-interference-graph name ig mapping)
   (define output (open-output-file (symbol->string name)
                                    #:mode 'text
@@ -467,17 +483,19 @@
   (match p
     [(X86Program info l&b)
      (define ig (build-interference-blocks l&b))
+     (define mg (build-move-blocks l&b))
      ;; DEBUG beg
-     ;; (define-values (mapping pq) (init-pq ig))
+     ;; (define-values (mapping pq) (init-pq ig mg))
      ;; (pre-saturate-pq ig mapping pq)
-     ;; (color-graph-exec ig mapping pq)
+     ;; (color-graph-exec ig mg mapping pq)
      ;; (displayln "DEBUG")
      ;; (hash-for-each mapping
      ;;                (lambda (key node) (displayln node)))
      ;; (output-interference-graph 'PROG ig mapping)
      ;; (displayln "END DEBUG")
      ;; end
-     (X86Program (cons (cons 'conflicts ig) info)
+     (X86Program (cons (cons 'conflicts ig)
+                       (cons (cons 'moves mg) info))
                  l&b)]))
 
 (define reg-to-color '((rax . -1) (rsp . -2) (rbp . -3) (r11 . -4) (r15 . -5)
@@ -487,9 +505,13 @@
                                   (7 . rbx) (8 . r12) (9 . r13) (10 . r14)))
 (define calee-saved-regs '(rbp rsp rbx r12 r13 r14))
 
-(struct PqItem (key color saturation node) #:transparent #:mutable)
+(struct PqItem (key color saturation node num-assign) #:transparent #:mutable)
 (define (cmp-PqItems i1 i2)
-  (>= (set-count (PqItem-saturation i1)) (set-count (PqItem-saturation i2))))
+  (define i1-saturation (set-count (PqItem-saturation i1)))
+  (define i2-saturation (set-count (PqItem-saturation i2)))
+  (if (= i1-saturation i2-saturation)
+      (>= (PqItem-num-assign i1) (PqItem-num-assign i2))
+      (> i1-saturation i2-saturation)))
 
 (define (notify-neighbors ig mapping pq item)
   (define color (PqItem-color item))
@@ -501,12 +523,13 @@
     (when (and neigh-node (not (PqItem-color neigh-item)))
       (pqueue-decrease-key! pq neigh-node))))
 
-(define (init-pq ig)
+(define (init-pq ig mg)
   (define mapping (make-hash))
   (define pq (make-pqueue cmp-PqItems))
 
   (for ([v (get-vertices ig)])
-    (define item (PqItem v #f (mutable-set) #f))
+    (define num-assign (if (has-vertex? mg v) (length (get-neighbors mg v)) 0))
+    (define item (PqItem v #f (mutable-set) #f num-assign))
     (hash-set! mapping v item)
     (match v
       [(Reg r)
@@ -531,18 +554,41 @@
 (define (chose-item pq)
   (pqueue-pop! pq))
 
-(define (chose-color ig mapping pq item start)
+(define (min-available-color item start)
   (if (set-member? (PqItem-saturation item) start)
-      (chose-color ig mapping pq item (+ start 1))
-      (begin
-        (set-PqItem-color! item start)
-        (notify-neighbors ig mapping pq item))))
+      (min-available-color item (+ start 1))
+      start))
 
-(define (color-graph-exec ig mapping pq)
+(define (min-assign-color mg mapping item)
+  (define key (PqItem-key item))
+  (define neighbors (if (has-vertex? mg key) (get-neighbors mg key) '()))
+  (define neigh-colors
+    (list->set (filter exact-nonnegative-integer?
+                       (for/list ([neigh neighbors])
+                         (PqItem-color (hash-ref mapping neigh))))))
+  (define available-colors (set-subtract neigh-colors (PqItem-saturation item)))
+  (if (set-empty? available-colors)
+      #f
+      (foldl min (set-first available-colors) (set->list available-colors))))
+
+(define (chose-color ig mg mapping pq item)
+  (define min-available (min-available-color item 0))
+  (define min-assign (min-assign-color mg mapping item))
+  (define chosen
+    (if (or (not min-assign)
+            (= min-available min-assign)
+            (and (< min-available (length color-to-reg))
+                 (>= min-assign (length color-to-reg))))
+        min-available
+        min-assign))
+  (set-PqItem-color! item chosen)
+  (notify-neighbors ig mapping pq item))
+
+(define (color-graph-exec ig mg mapping pq)
   (when (> (pqueue-count pq) 0)
     (begin
-      (chose-color ig mapping pq (chose-item pq) 0)
-      (color-graph-exec ig mapping pq))))
+      (chose-color ig mg mapping pq (chose-item pq))
+      (color-graph-exec ig mg mapping pq))))
 
 (define (assign-var-home color var)
   (if (< color (length color-to-reg))
@@ -556,10 +602,10 @@
     (define color (PqItem-color (hash-ref mapping (Var var))))
     (assign-var-home color var)))
 
-(define (color-graph ig vars)
-  (define-values (mapping pq) (init-pq ig))
+(define (color-graph ig mg vars)
+  (define-values (mapping pq) (init-pq ig mg))
   (pre-saturate-pq ig mapping pq)
-  (color-graph-exec ig mapping pq)
+  (color-graph-exec ig mg mapping pq)
   (assign-var-homes mapping vars))
 
 (define (assign-homes-operands operands mapping)
@@ -596,8 +642,9 @@
   (match p
     [(X86Program info (list (cons 'start (Block bi instructions))))
      (define conflicts (dict-ref info 'conflicts))
+     (define moves (dict-ref info 'moves))
      (define vars (dict-ref info 'locals))
-     (define block-homes (color-graph conflicts vars))
+     (define block-homes (color-graph conflicts moves vars))
      (define stack-space (compute-stack-space block-homes))
      (define used-callee (compute-used-callee block-homes))
      (X86Program (cons `(stack-space . ,stack-space)
