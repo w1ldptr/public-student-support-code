@@ -659,15 +659,14 @@
 ;; must be named "compiler.rkt"
 (define compiler-passes
   `(
-    ("partial evaluation" ,pe-Lvar ,interp-Lvar ,type-check-Lvar)
-     ;; Uncomment the following passes as you finish them.
-     ("uniquify" ,uniquify ,interp-Lvar ,type-check-Lvar)
-     ("remove complex opera*" ,remove-complex-opera* ,interp-Lvar ,type-check-Lvar)
-     ("explicate control" ,explicate-control ,interp-Cvar ,type-check-Cvar)
-     ("instruction selection" ,select-instructions ,interp-x86-0)
-     ("uncover-live" ,uncover-live ,interp-x86-0)
-     ("build-interference" ,build-interference ,interp-x86-0)
-     ("allocate registers" ,allocate-registers ,interp-x86-0)
-     ("patch instructions" ,patch-instructions ,interp-x86-0)
-     ("prelude-and-conclusion" ,prelude-and-conclusion ,interp-x86-0)
+    ;; ("partial evaluation" ,pe-Lvar ,interp-Lvar ,type-check-Lvar)
+    ;;  ("uniquify" ,uniquify ,interp-Lvar ,type-check-Lvar)
+    ;;  ("remove complex opera*" ,remove-complex-opera* ,interp-Lvar ,type-check-Lvar)
+    ;;  ("explicate control" ,explicate-control ,interp-Cvar ,type-check-Cvar)
+    ;;  ("instruction selection" ,select-instructions ,interp-x86-0)
+    ;;  ("uncover-live" ,uncover-live ,interp-x86-0)
+    ;;  ("build-interference" ,build-interference ,interp-x86-0)
+    ;;  ("allocate registers" ,allocate-registers ,interp-x86-0)
+    ;;  ("patch instructions" ,patch-instructions ,interp-x86-0)
+    ;;  ("prelude-and-conclusion" ,prelude-and-conclusion ,interp-x86-0)
      ))
