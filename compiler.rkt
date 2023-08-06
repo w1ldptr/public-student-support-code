@@ -715,12 +715,42 @@
                                            (assign-homes-from-alist instructions
                                                                     block-homes)))))]))
 
+(define (shrink-exp e)
+  (match e
+    [(Prim 'and (list e1 e2)) (If (shrink-exp e1) (shrink-exp e2) (Bool #f))]
+    [(Prim 'or (list e1 e2)) (If (shrink-exp e1) (Bool #t) (shrink-exp e2))]
+    [(Prim '<= (list e1 e2))
+     (define tmp (gensym))
+     (Let tmp (shrink-exp e1)
+          (Prim 'not (list (Prim '< (list (shrink-exp e2) (Var tmp))))))]
+    [(Prim '> (list e1 e2))
+     (define tmp1 (gensym))
+     (define tmp2 (gensym))
+     (Let tmp1 (shrink-exp e1)
+          (Let tmp2 (shrink-exp e2)
+               (If (Prim 'eq? (list (Var tmp1) (Var tmp2)))
+                   (Bool #f)
+                   (If (Prim '< (list (Var tmp1) (Var tmp2)))
+                       (Bool #f)
+                       (Bool #t)))))]
+    [(Prim '>= (list e1 e2))
+     (Prim 'not (list (Prim '< (list (shrink-exp e1) (shrink-exp e2)))))]
+    [(Prim op le) (Prim op (map shrink-exp le))]
+    [(Let rval lval exp) (Let rval (shrink-exp lval) (shrink-exp exp))]
+    [(If ce te ee) (If (shrink-exp ce) (shrink-exp te) (shrink-exp ee))]
+    [else e]))
+
+(define (shrink p)
+  (match p
+    [(Program info e) (Program info (shrink-exp e))]))
+
 ;; Define the compiler passes to be used by interp-tests and the grader
 ;; Note that your compiler file (the file that defines the passes)
 ;; must be named "compiler.rkt"
 (define compiler-passes
   `(
     ("partial evaluation" ,pe ,interp-Lif ,type-check-Lif)
+    ("shrink" ,shrink ,interp-Lif ,type-check-Lif)
     ;;  ("uniquify" ,uniquify ,interp-Lvar ,type-check-Lvar)
     ;;  ("remove complex opera*" ,remove-complex-opera* ,interp-Lvar ,type-check-Lvar)
     ;;  ("explicate control" ,explicate-control ,interp-Cvar ,type-check-Cvar)
