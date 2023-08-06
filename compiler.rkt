@@ -4,9 +4,11 @@
 (require graph)
 (require "interp-Lint.rkt")
 (require "interp-Lvar.rkt")
+(require "interp-Lif.rkt")
 (require "interp-Cvar.rkt")
 (require "interp.rkt")
 (require "type-check-Lvar.rkt")
+(require "type-check-Lif.rkt")
 (require "type-check-Cvar.rkt")
 (require "utilities.rkt")
 (require "priority_queue.rkt")
@@ -65,17 +67,76 @@
     [(e (Int n)) (Prim '+ (list (pe-neg (Int n)) e))]
     [(_ _) (Prim '+ (list r1 (pe-neg r2)))]))
 
+(define (pe-not r)
+  (match r
+    [(Bool #t) (Bool #f)]
+    [(Bool #f) (Bool #t)]
+    [else (Prim 'not (list r))]))
+
+(define (pe-and r1 r2)
+  (match* (r1 r2)
+    [((Bool b1) (Bool b2))
+     (Bool (and b1 b2))]
+    [(_ _) (Prim 'and (list r1 r2))]))
+
+(define (pe-or r1 r2)
+  (match* (r1 r2)
+    [((Bool b1) (Bool b2))
+     (Bool (or b1 b2))]
+    [(_ _) (Prim 'or (list r1 r2))]))
+
+(define (pe-< r1 r2)
+  (match* (r1 r2)
+    [((Int n1) (Int n2))
+     (Bool (< n1 n2))]
+    [(_ _) (Prim '< (list r1 r2))]))
+
+(define (pe-<= r1 r2)
+  (match* (r1 r2)
+    [((Int n1) (Int n2))
+     (Bool (<= n1 n2))]
+    [(_ _) (Prim '<= (list r1 r2))]))
+
+(define (pe-> r1 r2)
+  (match* (r1 r2)
+    [((Int n1) (Int n2))
+     (Bool (> n1 n2))]
+    [(_ _) (Prim '> (list r1 r2))]))
+
+(define (pe->= r1 r2)
+  (match* (r1 r2)
+    [((Int n1) (Int n2))
+     (Bool (>= n1 n2))]
+    [(_ _) (Prim '>= (list r1 r2))]))
+
+(define (pe-eq? r1 r2)
+  (match* (r1 r2)
+    [((Int n1) (Int n2))
+     (Bool (eq? n1 n2))]
+    [(_ _) (Prim 'eq? (list r1 r2))]))
+
 (define (pe-exp e)
   (match e
     [(Int n) (Int n)]
     [(Var x) (Var x)]
+    [(Bool b) (Bool b)]
     [(Prim 'read '()) (Prim 'read '())]
     [(Prim '- (list e1)) (pe-neg (pe-exp e1))]
     [(Prim '+ (list e1 e2)) (pe-add (pe-exp e1) (pe-exp e2))]
     [(Prim '- (list e1 e2)) (pe-sub (pe-exp e1) (pe-exp e2))]
+    [(Prim 'not (list e)) (pe-not (pe-exp e))]
+    [(Prim 'and (list e1 e2)) (pe-and (pe-exp e1) (pe-exp e2))]
+    [(Prim 'or (list e1 e2)) (pe-or (pe-exp e1) (pe-exp e2))]
+    [(Prim '< (list e1 e2)) (pe-< (pe-exp e1) (pe-exp e2))]
+    [(Prim '<= (list e1 e2)) (pe-<= (pe-exp e1) (pe-exp e2))]
+    [(Prim '> (list e1 e2)) (pe-> (pe-exp e1) (pe-exp e2))]
+    [(Prim '>= (list e1 e2)) (pe->= (pe-exp e1) (pe-exp e2))]
+    [(Prim 'eq? (list e1 e2)) (pe-eq? (pe-exp e1) (pe-exp e2))]
+    [(Prim op le) (Prim op (map pe-exp le))]
+    [(If ce te ee) (If (pe-exp ce) (pe-exp te) (pe-exp ee))]
     [(Let rval lval exp) (Let rval (pe-exp lval) (pe-exp exp))]))
 
-(define (pe-Lvar p)
+(define (pe p)
   (match p
     [(Program info e) (Program info (pe-exp e))]))
 
@@ -659,7 +720,7 @@
 ;; must be named "compiler.rkt"
 (define compiler-passes
   `(
-    ;; ("partial evaluation" ,pe-Lvar ,interp-Lvar ,type-check-Lvar)
+    ("partial evaluation" ,pe ,interp-Lif ,type-check-Lif)
     ;;  ("uniquify" ,uniquify ,interp-Lvar ,type-check-Lvar)
     ;;  ("remove complex opera*" ,remove-complex-opera* ,interp-Lvar ,type-check-Lvar)
     ;;  ("explicate control" ,explicate-control ,interp-Cvar ,type-check-Cvar)
