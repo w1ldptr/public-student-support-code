@@ -150,11 +150,16 @@
       [(Var x)
        (let ([mapping (dict-ref env x)]) (Var mapping))]
       [(Int n) (Int n)]
+      [(Bool b) (Bool b)]
       [(Let x e body)
        (let ([xnew (gensym x)])
          (Let xnew
               ((uniquify-exp env) e)
               ((uniquify-exp (cons (cons x xnew) env)) body)))]
+      [(If ce te ee)
+       (If ((uniquify-exp env) ce)
+           ((uniquify-exp env) te)
+           ((uniquify-exp env) ee))]
       [(Prim op es)
        (Prim op (for/list ([e es]) ((uniquify-exp env) e)))])))
 
@@ -751,7 +756,7 @@
   `(
     ("partial evaluation" ,pe ,interp-Lif ,type-check-Lif)
     ("shrink" ,shrink ,interp-Lif ,type-check-Lif)
-    ;;  ("uniquify" ,uniquify ,interp-Lvar ,type-check-Lvar)
+    ("uniquify" ,uniquify ,interp-Lif ,type-check-Lif)
     ;;  ("remove complex opera*" ,remove-complex-opera* ,interp-Lvar ,type-check-Lvar)
     ;;  ("explicate control" ,explicate-control ,interp-Cvar ,type-check-Cvar)
     ;;  ("instruction selection" ,select-instructions ,interp-x86-0)
