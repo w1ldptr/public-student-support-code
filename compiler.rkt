@@ -172,11 +172,16 @@
   (match e
     [(Var x) (values (Var x) '())]
     [(Int n) (values (Int n) '())]
+    [(Bool b) (values (Bool b) '())]
     [(Let x e body)
      (define-values (atom env) (rco-atom body))
      (values atom
              (cons (cons x (rco-exp e))
                    env))]
+    [(If ce te ee)
+     (define symb (gensym 'if-atom))
+     (values (Var symb)
+             (list (cons symb (rco-exp e))))]
     [(Prim op es)
      (define-values (atoms child-envs)
        (for/lists (l1 l2)
@@ -192,8 +197,11 @@
   (match e
     [(Var x) (Var x)]
     [(Int n) (Int n)]
+    [(Bool b) (Bool b)]
     [(Let x e body)
      (Let x (rco-exp e) (rco-exp body))]
+    [(If ce te ee)
+     (If (rco-exp ce) (rco-exp te) (rco-exp ee))]
     [(Prim op es)
      (define-values (atoms child-envs)
        (for/lists (l1 l2)
@@ -757,7 +765,7 @@
     ("partial evaluation" ,pe ,interp-Lif ,type-check-Lif)
     ("shrink" ,shrink ,interp-Lif ,type-check-Lif)
     ("uniquify" ,uniquify ,interp-Lif ,type-check-Lif)
-    ;;  ("remove complex opera*" ,remove-complex-opera* ,interp-Lvar ,type-check-Lvar)
+    ("remove complex opera*" ,remove-complex-opera* ,interp-Lif ,type-check-Lif)
     ;;  ("explicate control" ,explicate-control ,interp-Cvar ,type-check-Cvar)
     ;;  ("instruction selection" ,select-instructions ,interp-x86-0)
     ;;  ("uncover-live" ,uncover-live ,interp-x86-0)
