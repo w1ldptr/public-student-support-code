@@ -6,10 +6,12 @@
 (require "interp-Lvar.rkt")
 (require "interp-Lif.rkt")
 (require "interp-Cvar.rkt")
+(require "interp-Cif.rkt")
 (require "interp.rkt")
 (require "type-check-Lvar.rkt")
 (require "type-check-Lif.rkt")
 (require "type-check-Cvar.rkt")
+(require "type-check-Cif.rkt")
 (require "utilities.rkt")
 (require "priority_queue.rkt")
 (provide (all-defined-out))
@@ -219,8 +221,23 @@
   (match p
     [(Program info e) (Program info (rco-exp e))]))
 
+(define basic-blocks (make-hash))
+
+(define (create-block tail)
+  (match tail
+    [(Goto label) tail]
+    [else
+     (define label (gensym 'block))
+     (hash-set! basic-blocks label tail)
+     (Goto label)]))
+
 (define (explicate-tail e)
   (match e
+    [(If ce te ee)
+     (define-values (te-cont te-vars) (explicate-tail te))
+     (define-values (ee-cont ee-vars) (explicate-tail ee))
+     (define-values (ce-cont ce-vars) (explicate-pred ce te-cont ee-cont))
+     (values ce-cont (append te-vars ee-vars ce-vars))]
     [(Let x rhs body)
      (define-values (body-cont body-vars) (explicate-tail body))
      (define-values (rhs-cont rhs-vars) (explicate-assign rhs x body-cont))
@@ -229,19 +246,58 @@
 
 (define (explicate-assign e x cont)
   (match e
+    [(If ce te ee)
+     (define block-cont (create-block cont))
+     (define-values (te-cont te-vars) (explicate-assign te x block-cont))
+     (define-values (ee-cont ee-vars) (explicate-assign ee x block-cont))
+     (define-values (ce-cont ce-vars) (explicate-pred ce te-cont ee-cont))
+     (values ce-cont (append te-vars ee-vars ce-vars))]
     [(Let y rhs body)
      (define-values (body-cont body-vars) (explicate-assign body x cont))
      (define-values (rhs-cont rhs-vars) (explicate-assign rhs y body-cont))
      (values rhs-cont (append body-vars rhs-vars))]
     [else (values (Seq (Assign (Var x) e) cont) (list x))]))
 
+(define (explicate-pred e tc ec)
+  (match e
+    [(Var _)
+     (values (IfStmt (Prim 'eq? (list e (Bool #t)))
+                     (create-block tc)
+                     (create-block ec))
+             '())]
+    [(Let x rhs body)
+     (define-values (body-cont body-vars) (explicate-pred body tc ec))
+     (define-values (rhs-cont rhs-vars) (explicate-assign rhs x body-cont))
+     (values rhs-cont (append body-vars rhs-vars))]
+    [(Prim 'not (list e))
+     (values (IfStmt (Prim 'eq? (list e (Bool #f)))
+                     (create-block tc)
+                     (create-block ec))
+             '())]
+    [(Prim op es)
+     #:when (or (eq? op 'eq?) (eq? op '<))
+     (values (IfStmt e (create-block tc) (create-block ec))
+             '())]
+    [(Bool b) (values (if b tc ec) '())]
+    [(If ie itc iec)
+     (define tcb (create-block tc))
+     (define ecb (create-block ec))
+     (define-values (itc-cont itc-vars) (explicate-pred itc tcb ecb))
+     (define-values (iec-cont iec-vars) (explicate-pred iec tcb ecb))
+     (define-values (if-cont if-vars) (explicate-pred ie itc-cont iec-cont))
+     (values if-cont (append itc-vars iec-vars if-vars))]
+    [else (error "explicate-pred unhandled case" e)]))
+
 ;; explicate-control : Lvar^mon -> Cvar
 (define (explicate-control p)
   (match p
     [(Program info e)
+     (hash-clear! basic-blocks)
      (define-values (cont vars) (explicate-tail e))
+     (define aux-blocks (hash->list basic-blocks))
      (CProgram `((locals . ,vars))
-               `((start . ,cont)))]))
+               (cons (cons 'start cont)
+                     aux-blocks))]))
 
 (define (select-atm e)
   (match e
@@ -766,7 +822,7 @@
     ("shrink" ,shrink ,interp-Lif ,type-check-Lif)
     ("uniquify" ,uniquify ,interp-Lif ,type-check-Lif)
     ("remove complex opera*" ,remove-complex-opera* ,interp-Lif ,type-check-Lif)
-    ;;  ("explicate control" ,explicate-control ,interp-Cvar ,type-check-Cvar)
+    ("explicate control" ,explicate-control ,interp-Cif ,type-check-Cif)
     ;;  ("instruction selection" ,select-instructions ,interp-x86-0)
     ;;  ("uncover-live" ,uncover-live ,interp-x86-0)
     ;;  ("build-interference" ,build-interference ,interp-x86-0)
