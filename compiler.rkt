@@ -304,7 +304,15 @@
     [(Int n) (Imm n)]
     [(Var x) e]
     [(Reg r) e]
+    [(Bool b) (Imm (if b 1 0))]
     [else (error "select-atm unhandled case " e)]))
+
+(define (select-stmt-cmp ce)
+  (match ce
+    [(Prim cmp (list op1 op2))
+     #:when (or (eq? cmp 'eq?) (eq? cmp '<))
+     (list (Instr 'cmpq (list (select-atm op2) (select-atm op1))))]
+    [else (error "select-stmt-cmp unhandled case " ce)]))
 
 (define (select-stmt-sum se)
   (match se
@@ -348,6 +356,27 @@
            (Instr 'movq (list (Reg 'rax) dest)))]
     [else (error "select-stmt-read unhandled case " re)]))
 
+(define (select-stmt-not ne)
+  (match ne
+    [(Assign var (Prim 'not (list var)))
+     (list (Instr 'xorq (list (Imm 1) var)))]
+    [(Assign dest (Prim 'not (list atm)))
+     (list (Instr 'movq (list (select-atm atm) dest))
+           (Instr 'xorq (list (Imm 1) dest)))]
+    [else (error "select-stmt-not unhandled case " ne)]))
+
+(define (select-stmt-cond ce)
+  (match ce
+    [(Assign dest (Prim 'eq? l))
+     (append (select-stmt-cmp (Prim 'eq? l))
+             (list (Instr 'set (list 'e (Reg 'al)))
+                   (Instr 'movzbq (list (Reg 'al) dest))))]
+    [(Assign dest (Prim '< l))
+     (append (select-stmt-cmp (Prim 'eq? l))
+             (list (Instr 'set (list 'l (Reg 'al)))
+                   (Instr 'movzbq (list (Reg 'al) dest))))]
+    [else (error "select-stmt-cond unhandled case " ce)]))
+
 (define (select-stmt-atm e)
   (match e
     [(Assign dest atm)
@@ -362,11 +391,33 @@
      (append (select-stmt (Assign (Reg 'rax) re))
              (list (Jmp 'conclusion)))]))
 
+(define (select-stmt-if ie)
+  (match ie
+    [(IfStmt (Prim 'eq? l) (Goto l1) (Goto l2))
+     (append (select-stmt-cmp (Prim 'eq? l))
+             (list (JmpIf 'e l1)
+                   (Jmp l2)))]
+    [(IfStmt (Prim '< l) (Goto l1) (Goto l2))
+     (append (select-stmt-cmp (Prim 'eq? l))
+             (list (JmpIf 'l l1)
+                   (Jmp l2)))]
+    [else (error "select-stmt-if unhandled case " ie)]))
+
+(define (select-stmt-goto ge)
+  (match ge
+    [(Goto label)
+     (list (Jmp label))]
+    [else (error "select-stmt-goto unhandled case " ge)]))
+
 (define (select-stmt e)
   (match e
     [(Assign _ (Prim '+ l)) (select-stmt-sum e)]
     [(Assign _ (Prim '- l)) (select-stmt-dif e)]
     [(Assign _ (Prim 'read '())) (select-stmt-read e)]
+    [(Assign _ (Prim 'not l)) (select-stmt-not e)]
+    [(Assign _ (Prim cmp l))
+     #:when (or (eq? cmp 'eq?) (eq? cmp '<))
+     (select-stmt-cond e)]
     [(Assign _ atm) (select-stmt-atm e)]
     [(Return e) (select-stmt-return e)]
     [else (error "select-stmt unhandled case " e)]))
@@ -374,6 +425,8 @@
 (define (select-tail e)
   (match e
     [(Return _) (select-stmt e)]
+    [(IfStmt _ _ _) (select-stmt-if e)]
+    [(Goto label) (select-stmt-goto e)]
     [(Seq se t) (append (select-stmt se) (select-tail t))]
     [else (error "select-tail unhandled case " e)]))
 
@@ -823,7 +876,7 @@
     ("uniquify" ,uniquify ,interp-Lif ,type-check-Lif)
     ("remove complex opera*" ,remove-complex-opera* ,interp-Lif ,type-check-Lif)
     ("explicate control" ,explicate-control ,interp-Cif ,type-check-Cif)
-    ;;  ("instruction selection" ,select-instructions ,interp-x86-0)
+    ("instruction selection" ,select-instructions ,interp-pseudo-x86-1)
     ;;  ("uncover-live" ,uncover-live ,interp-x86-0)
     ;;  ("build-interference" ,build-interference ,interp-x86-0)
     ;;  ("allocate registers" ,allocate-registers ,interp-x86-0)
