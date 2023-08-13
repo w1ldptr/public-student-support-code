@@ -14,6 +14,7 @@
 (require "type-check-Cif.rkt")
 (require "utilities.rkt")
 (require "priority_queue.rkt")
+(require "multigraph.rkt")
 (provide (all-defined-out))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -527,11 +528,21 @@
      (X86Program info
                  (cons main (append blocks (list conclusion))))]))
 
-(define (instr-r-set instr)
+(define (instr-r-set label->live instr)
   (match instr
     [(Instr 'movq (list (Reg src) _)) (set (Reg src))]
     [(Instr 'movq (list (Var src) _)) (set (Var src))]
     [(Instr 'movq _) (set)]
+    [(Instr 'cmpq l)
+     (list->set (for/fold ([regs-vars '()])
+                          ([op l])
+                  (match op
+                    [(Reg r) (cons op regs-vars)]
+                    [(Var v) (cons op regs-vars)]
+                    [else regs-vars])))]
+    [(Instr 'movzbq (list (Reg src) _))
+     (set (Reg (dict-ref byte-to-reg src)))]
+    [(Instr 'set (list _ _)) (set)]
     [(Instr _ (list (Imm imm) dst)) (set)]
     [(Instr _ (list src dst)) (set src dst)]
     [(Instr 'negq (list op)) (set op)]
@@ -546,10 +557,12 @@
      (define args (list (Reg 'rdi) (Reg 'rsi) (Reg 'rdx) (Reg 'rcx) (Reg 'r8) (Reg 'r9)))
      (list->set (if (< arity 6) (take args arity) args))]
     [(Retq) (set (Reg 'rax))]
+    [(JmpIf _ label) (dict-ref label->live label)]
     [else (set)]))
 
 (define (instr-w-set instr)
   (match instr
+    [(Instr 'cmpq _) (set)]
     [(Instr _ (list src dst)) (set dst)]
     [(Instr 'negq (list op)) (set op)]
     [(Instr 'pushq _) (set (Reg 'rsp))]
@@ -569,29 +582,44 @@
        (for/foldr ([sets initial])
                   ([instr instr-list])
          (define Lafter (car sets))
-         (define Lbefore (set-union (instr-r-set instr)
-                                    (set-subtract Lafter
-                                                  (instr-w-set instr))))
+         (define rset (instr-r-set label->live instr))
+         (define wset (instr-w-set instr))
+         (define Lbefore (set-union rset (set-subtract Lafter wset)))
          (cons Lbefore sets)))
      (Block (cons (cons 'live liveness) info)
             instr-list)]))
 
-(define (uncover-live-blocks blocks)
-  (for/foldr ([label->live (list (cons 'conclusion
-                                        (set (Reg 'rax) (Reg 'rsp))))] ;;XXX
-              [processed-blocks '()]
-              #:result processed-blocks)
-             ([label&block blocks])
+(define (build-cfg blocks)
+  (define cfg (make-multigraph '()))
+  (for ([label&block blocks])
     (match label&block
-      [(cons label block)
-       (define new-block-liveness (block-liveness block label->live))
-       (define new-label->live
-         (match new-block-liveness
-           [(Block (cons (cons 'live liveness) _) instr-list)
-            (cons (cons label (car liveness)) label->live)]))
-       (define new-processed-blocks (cons (cons label new-block-liveness)
-                                          processed-blocks))
-       (values new-label->live new-processed-blocks)])))
+      [(cons label (Block _ instr-list))
+       (add-vertex! cfg label)
+       (for ([instr instr-list])
+         (match instr
+           [(Jmp to) (add-directed-edge! cfg label to)]
+           [(JmpIf _ to) (add-directed-edge! cfg label to)]
+           [else #f]))]))
+  cfg)
+
+(define (compute-ordering cfg)
+  (tsort (transpose cfg)))
+
+(define (uncover-live-blocks blocks)
+  (define cfg (build-cfg blocks))
+  (define ordered (compute-ordering cfg))
+  (define label->live
+    (make-hash (list (cons 'conclusion
+                           (set (Reg 'rax) (Reg 'rsp))))))
+
+  (reverse (for/list ([label ordered]
+                      #:when (dict-ref blocks label #f))
+             (define block (dict-ref blocks label))
+             (define new-block-liveness (block-liveness block label->live))
+             (match new-block-liveness
+               [(Block (cons (cons 'live liveness) _) _)
+                (hash-set! label->live label (car liveness))])
+             (cons label new-block-liveness))))
 
 (define (uncover-live p)
   (match p
@@ -686,6 +714,7 @@
                                   (r10 . 6) (rbx . 7) (r12 . 8) (r13 . 9) (r14 . 10)))
 (define color-to-reg '((0 . rcx ) (1 . rdx) (2 . rsi) (3 . rdi) (4 . r8) (5 . r9) (6 . r10)
                                   (7 . rbx) (8 . r12) (9 . r13) (10 . r14)))
+(define byte-to-reg '((al . rax)))
 (define calee-saved-regs '(rbp rsp rbx r12 r13 r14))
 
 (struct PqItem (key color saturation node num-assign) #:transparent #:mutable)
@@ -877,7 +906,7 @@
     ("remove complex opera*" ,remove-complex-opera* ,interp-Lif ,type-check-Lif)
     ("explicate control" ,explicate-control ,interp-Cif ,type-check-Cif)
     ("instruction selection" ,select-instructions ,interp-pseudo-x86-1)
-    ;;  ("uncover-live" ,uncover-live ,interp-x86-0)
+    ("uncover-live" ,uncover-live ,interp-x86-1)
     ;;  ("build-interference" ,build-interference ,interp-x86-0)
     ;;  ("allocate registers" ,allocate-registers ,interp-x86-0)
     ;;  ("patch instructions" ,patch-instructions ,interp-x86-0)
