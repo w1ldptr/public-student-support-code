@@ -563,6 +563,8 @@
 (define (instr-w-set instr)
   (match instr
     [(Instr 'cmpq _) (set)]
+    [(Instr 'set (list _ (Reg r)))
+     (set (Reg (dict-ref byte-to-reg r)))]
     [(Instr _ (list src dst)) (set dst)]
     [(Instr 'negq (list op)) (set op)]
     [(Instr 'pushq _) (set (Reg 'rsp))]
@@ -641,6 +643,15 @@
      (interference-rule1 dst (set-remove Lafter dst) ig)]
     [(Instr 'movq (list src dst))
      (interference-rule1 dst (set-remove (set-remove Lafter src) dst) ig)]
+    [(Instr 'movzbq (list src dst))
+     (match src
+       [(Imm _)
+        (interference-rule1 dst (set-remove Lafter dst) ig)]
+       [(Reg r)
+        (interference-rule1 dst (set-remove (set-remove Lafter
+                                                        (Reg (dict-ref byte-to-reg r)))
+                                            dst)
+                            ig)])]
     [(Instr i _)
      (interference-rule2 (instr-w-set instr) Lafter ig)]
     [(Callq f a)
@@ -907,7 +918,7 @@
     ("explicate control" ,explicate-control ,interp-Cif ,type-check-Cif)
     ("instruction selection" ,select-instructions ,interp-pseudo-x86-1)
     ("uncover-live" ,uncover-live ,interp-x86-1)
-    ;;  ("build-interference" ,build-interference ,interp-x86-0)
+    ("build-interference" ,build-interference ,interp-x86-1)
     ;;  ("allocate registers" ,allocate-registers ,interp-x86-0)
     ;;  ("patch instructions" ,patch-instructions ,interp-x86-0)
     ;;  ("prelude-and-conclusion" ,prelude-and-conclusion ,interp-x86-0)
