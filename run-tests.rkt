@@ -33,5 +33,5 @@
 ;; Uncomment the following when all the passes are complete to
 ;; test the final x86 code.
 ;; (compiler-tests "var" #f compiler-passes "var_test" (tests-for "var"))
-;; (compiler-tests "cond" type-check-Lif compiler-passes "cond_test" (tests-for "cond"))
+(compiler-tests "cond" type-check-Lif compiler-passes "cond_test" (tests-for "cond"))
 
