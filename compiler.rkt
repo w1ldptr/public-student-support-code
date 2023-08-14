@@ -450,6 +450,14 @@
      (list (Instr 'movq (list (Deref reg1 shift1) (Reg 'rax)))
            (Instr i (list (Reg 'rax) (Deref reg2 shift2))))]
 
+    [(Instr 'cmpq (list op (Imm val)))
+     (list (Instr 'movq (list (Imm val) (Reg 'rax)))
+           (Instr 'cmpq (list op (Reg 'rax))))]
+
+    [(Instr 'movzbq (list op (Deref reg shift)))
+     (list (Instr 'movzbq (list op (Reg 'rax)))
+           (Instr 'movq (list (Reg 'rax) (Deref reg shift))))]
+
     [(Instr i (list (Imm val) (Deref reg shift)))
      #:when (>= val (expt 2 16))
      (list (Instr 'movq (list (Imm val) (Reg 'rax)))
@@ -925,6 +933,6 @@
     ("uncover-live" ,uncover-live ,interp-x86-1)
     ("build-interference" ,build-interference ,interp-x86-1)
     ("allocate registers" ,allocate-registers ,interp-x86-1)
-    ;;  ("patch instructions" ,patch-instructions ,interp-x86-0)
+    ("patch instructions" ,patch-instructions ,interp-x86-1)
     ;;  ("prelude-and-conclusion" ,prelude-and-conclusion ,interp-x86-0)
      ))
