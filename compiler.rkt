@@ -821,7 +821,8 @@
         (cons var (Deref 'rbp shift)))))
 
 (define (assign-var-homes mapping vars)
-  (for/list ([var vars])
+  (for/list ([var vars]
+             #:when (hash-ref mapping (Var var) #f))
     (define color (PqItem-color (hash-ref mapping (Var var))))
     (assign-var-home color var)))
 
@@ -861,9 +862,15 @@
        (set-add used r)]
       [else used])))
 
+(define (allocate-registers-blocks labels-and-blocks homes)
+  (for/list ([label&block labels-and-blocks])
+    (match label&block
+      [(cons label (Block info instructions))
+       (cons label (Block info (assign-homes-from-alist instructions homes)))])))
+
 (define (allocate-registers p)
   (match p
-    [(X86Program info (list (cons 'start (Block bi instructions))))
+    [(X86Program info labels-and-blocks)
      (define conflicts (dict-ref info 'conflicts))
      (define moves (dict-ref info 'moves))
      (define vars (dict-ref info 'locals))
@@ -873,9 +880,7 @@
      (X86Program (cons `(stack-space . ,stack-space)
                        (cons `(used_callee . ,used-callee)
                              info))
-                 (list (cons 'start (Block bi
-                                           (assign-homes-from-alist instructions
-                                                                    block-homes)))))]))
+                 (allocate-registers-blocks labels-and-blocks block-homes))]))
 
 (define (shrink-exp e)
   (match e
@@ -919,7 +924,7 @@
     ("instruction selection" ,select-instructions ,interp-pseudo-x86-1)
     ("uncover-live" ,uncover-live ,interp-x86-1)
     ("build-interference" ,build-interference ,interp-x86-1)
-    ;;  ("allocate registers" ,allocate-registers ,interp-x86-0)
+    ("allocate registers" ,allocate-registers ,interp-x86-1)
     ;;  ("patch instructions" ,patch-instructions ,interp-x86-0)
     ;;  ("prelude-and-conclusion" ,prelude-and-conclusion ,interp-x86-0)
      ))
