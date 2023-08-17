@@ -1,6 +1,6 @@
 #lang racket
 (require racket/set racket/stream)
-(require racket/fixnum)
+(require racket/fixnum racket/promise)
 (require graph)
 (require "interp-Lint.rkt")
 (require "interp-Lvar.rkt")
@@ -225,12 +225,14 @@
 (define basic-blocks (make-hash))
 
 (define (create-block tail)
-  (match tail
-    [(Goto label) tail]
-    [else
-     (define label (gensym 'block))
-     (hash-set! basic-blocks label tail)
-     (Goto label)]))
+  (delay
+    (define t  (force tail))
+    (match t
+      [(Goto _) t]
+      [else
+       (define label (gensym 'block))
+       (hash-set! basic-blocks label t)
+       (Goto label)])))
 
 (define (explicate-tail e)
   (match e
@@ -243,7 +245,7 @@
      (define-values (body-cont body-vars) (explicate-tail body))
      (define-values (rhs-cont rhs-vars) (explicate-assign rhs x body-cont))
      (values rhs-cont (append body-vars rhs-vars))]
-    [else (values (Return e) '())]))
+    [else (values (delay (Return e)) '())]))
 
 (define (explicate-assign e x cont)
   (match e
@@ -257,27 +259,27 @@
      (define-values (body-cont body-vars) (explicate-assign body x cont))
      (define-values (rhs-cont rhs-vars) (explicate-assign rhs y body-cont))
      (values rhs-cont (append body-vars rhs-vars))]
-    [else (values (Seq (Assign (Var x) e) cont) (list x))]))
+    [else (values (delay (Seq (Assign (Var x) e) (force cont))) (list x))]))
 
 (define (explicate-pred e tc ec)
   (match e
     [(Var _)
-     (values (IfStmt (Prim 'eq? (list e (Bool #t)))
-                     (create-block tc)
-                     (create-block ec))
+     (values (delay (IfStmt (Prim 'eq? (list e (Bool #t)))
+                            (force (create-block tc))
+                            (force (create-block ec))))
              '())]
     [(Let x rhs body)
      (define-values (body-cont body-vars) (explicate-pred body tc ec))
      (define-values (rhs-cont rhs-vars) (explicate-assign rhs x body-cont))
      (values rhs-cont (append body-vars rhs-vars))]
     [(Prim 'not (list e))
-     (values (IfStmt (Prim 'eq? (list e (Bool #f)))
-                     (create-block tc)
-                     (create-block ec))
+     (values (delay (IfStmt (Prim 'eq? (list e (Bool #f)))
+                            (force (create-block tc))
+                            (force (create-block ec))))
              '())]
     [(Prim op es)
      #:when (or (eq? op 'eq?) (eq? op '<))
-     (values (IfStmt e (create-block tc) (create-block ec))
+     (values (delay (IfStmt e (force (create-block tc)) (force (create-block ec))))
              '())]
     [(Bool b) (values (if b tc ec) '())]
     [(If ie itc iec)
@@ -294,7 +296,8 @@
   (match p
     [(Program info e)
      (hash-clear! basic-blocks)
-     (define-values (cont vars) (explicate-tail e))
+     (define-values (promise vars) (explicate-tail e))
+     (define cont (force promise))
      (define aux-blocks (hash->list basic-blocks))
      (CProgram `((locals . ,vars))
                (cons (cons 'start cont)
