@@ -922,6 +922,99 @@
   (match p
     [(Program info e) (Program info (shrink-exp e))]))
 
+(define (build-weighted-cfg-with-degrees labels&blocks)
+  (define cfg (weighted-graph/directed '()))
+  (define-vertex-property cfg degree)
+
+  (for ([label&block labels&blocks])
+    (match label&block
+      [(cons label (Block _ instr-list))
+       (add-vertex! cfg label)
+       (for ([instr instr-list])
+         (match instr
+           [(Jmp to)
+            (degree-set! to (+ (degree to #:default 0) 1))
+            (add-directed-edge! cfg label to 1)]
+           [(JmpIf _ to)
+            (degree-set! to (+ (degree to #:default 0) 1))
+            (add-directed-edge! cfg label to 0)]
+           [else #f]))]))
+  (values cfg (degree->hash)))
+
+(define (output-cfg name cfg)
+  (define output (open-output-file (symbol->string name)
+                                   #:mode 'text
+                                   #:exists 'replace))
+  (graphviz cfg #:output output))
+
+(define (merge-blocks parent child)
+  (match (cons parent child)
+    [(cons (Block _ parent-instrs) (Block _ child-instrs))
+     (Block '() ;; XXX not merging blocks info
+            (append (reverse (cdr (reverse parent-instrs)))
+                    child-instrs))]))
+
+(define (remove-jumps-blocks-helper labels&blocks
+                                    cfg
+                                    processed
+                                    degrees
+                                    label)
+  (define neighbors
+    (filter (lambda (neigh)
+              (not (set-member? processed neigh)))
+            (remove 'conclusion (get-neighbors cfg label))))
+  (for ([neigh neighbors])
+    (set-add! processed neigh))
+  (when (< 2 (length neighbors))
+    (error "Too many jmp targets " neighbors))
+
+  ;; (displayln "DEBUG CFG")
+  ;; (displayln label)
+  ;; (displayln neighbors)
+  ;; (displayln (for/list ([neigh neighbors])
+  ;;              (dict-ref degrees neigh)))
+  ;; (displayln (for/list ([neigh neighbors])
+  ;;              (edge-weight cfg label neigh)))
+  ;; Can't merge with JumpIf targets marked by 0 weight
+  (define non-mergeable-labels&blocks
+    (let ([non-mergeable
+           (for/first ([neigh neighbors]
+                       #:when (eq? 0 (edge-weight cfg label neigh)))
+             (remove-jumps-blocks-helper labels&blocks cfg processed degrees neigh))])
+      (if non-mergeable non-mergeable '())))
+  ;; Can try to merge with Jmp targets marked by 1 weight...
+  (define mergeable-labels&blocks
+    (let ([mergeable
+           (for/first ([neigh neighbors]
+                       #:when (eq? 1 (edge-weight cfg label neigh)))
+             (remove-jumps-blocks-helper labels&blocks cfg processed degrees neigh))])
+      (if mergeable
+          (for/list ([l&b mergeable])
+            (match l&b
+              [(cons neigh block)
+               ;; ...and degree of 1
+               (if (and (member neigh neighbors)
+                        (eq? 1 (edge-weight cfg label neigh))
+                        (eq? 1 (dict-ref degrees neigh)))
+                   (cons label (merge-blocks (dict-ref labels&blocks label) block))
+                   (cons neigh block))]))
+          '())))
+
+  (if (dict-ref mergeable-labels&blocks label #f)
+      (append mergeable-labels&blocks non-mergeable-labels&blocks)
+      (cons (cons label (dict-ref labels&blocks label))
+            (append mergeable-labels&blocks non-mergeable-labels&blocks))))
+
+(define (remove-jumps-blocks labels&blocks)
+  (define-values (cfg degrees) (build-weighted-cfg-with-degrees labels&blocks))
+  ;; (output-cfg 'CFG cfg)
+  (remove-jumps-blocks-helper labels&blocks cfg (mutable-set 'start) degrees 'start))
+
+(define (remove-jumps p)
+  (match p
+    [(X86Program info labels&blocks)
+     (X86Program info (remove-jumps-blocks labels&blocks))]))
+
 ;; Define the compiler passes to be used by interp-tests and the grader
 ;; Note that your compiler file (the file that defines the passes)
 ;; must be named "compiler.rkt"
@@ -936,6 +1029,7 @@
     ("uncover-live" ,uncover-live ,interp-x86-1)
     ("build-interference" ,build-interference ,interp-x86-1)
     ("allocate registers" ,allocate-registers ,interp-x86-1)
+    ("remove jumps" ,remove-jumps ,interp-x86-1)
     ("patch instructions" ,patch-instructions ,interp-x86-1)
     ("prelude-and-conclusion" ,prelude-and-conclusion ,interp-x86-1)
      ))
