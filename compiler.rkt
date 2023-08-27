@@ -5,11 +5,13 @@
 (require "interp-Lint.rkt")
 (require "interp-Lvar.rkt")
 (require "interp-Lif.rkt")
+(require "interp-Lwhile.rkt")
 (require "interp-Cvar.rkt")
 (require "interp-Cif.rkt")
 (require "interp.rkt")
 (require "type-check-Lvar.rkt")
 (require "type-check-Lif.rkt")
+(require "type-check-Lwhile.rkt")
 (require "type-check-Cvar.rkt")
 (require "type-check-Cif.rkt")
 (require "utilities.rkt")
@@ -137,7 +139,13 @@
     [(Prim 'eq? (list e1 e2)) (pe-eq? (pe-exp e1) (pe-exp e2))]
     [(Prim op le) (Prim op (map pe-exp le))]
     [(If ce te ee) (If (pe-exp ce) (pe-exp te) (pe-exp ee))]
-    [(Let rval lval exp) (Let rval (pe-exp lval) (pe-exp exp))]))
+    [(Let rval lval exp) (Let rval (pe-exp lval) (pe-exp exp))]
+    [(SetBang var exp) (SetBang var (pe-exp exp))]
+    [(Begin es body) (Begin (for/list ([exp es])
+                              (pe-exp exp))
+                            (pe-exp body))]
+    [(WhileLoop cnd body) (WhileLoop (pe-exp cnd) (pe-exp body))]
+    [(Void) (Void)]))
 
 (define (pe p)
   (match p
@@ -1020,16 +1028,16 @@
 ;; must be named "compiler.rkt"
 (define compiler-passes
   `(
-    ("partial evaluation" ,pe ,interp-Lif ,type-check-Lif)
-    ("shrink" ,shrink ,interp-Lif ,type-check-Lif)
-    ("uniquify" ,uniquify ,interp-Lif ,type-check-Lif)
-    ("remove complex opera*" ,remove-complex-opera* ,interp-Lif ,type-check-Lif)
-    ("explicate control" ,explicate-control ,interp-Cif ,type-check-Cif)
-    ("instruction selection" ,select-instructions ,interp-pseudo-x86-1)
-    ("uncover-live" ,uncover-live ,interp-x86-1)
-    ("build-interference" ,build-interference ,interp-x86-1)
-    ("allocate registers" ,allocate-registers ,interp-x86-1)
-    ("remove jumps" ,remove-jumps ,interp-x86-1)
-    ("patch instructions" ,patch-instructions ,interp-x86-1)
-    ("prelude-and-conclusion" ,prelude-and-conclusion ,interp-x86-1)
+    ("partial evaluation" ,pe ,interp-Lwhile ,type-check-Lwhile)
+    ;; ("shrink" ,shrink ,interp-Lif ,type-check-Lif)
+    ;; ("uniquify" ,uniquify ,interp-Lif ,type-check-Lif)
+    ;; ("remove complex opera*" ,remove-complex-opera* ,interp-Lif ,type-check-Lif)
+    ;; ("explicate control" ,explicate-control ,interp-Cif ,type-check-Cif)
+    ;; ("instruction selection" ,select-instructions ,interp-pseudo-x86-1)
+    ;; ("uncover-live" ,uncover-live ,interp-x86-1)
+    ;; ("build-interference" ,build-interference ,interp-x86-1)
+    ;; ("allocate registers" ,allocate-registers ,interp-x86-1)
+    ;; ("remove jumps" ,remove-jumps ,interp-x86-1)
+    ;; ("patch instructions" ,patch-instructions ,interp-x86-1)
+    ;; ("prelude-and-conclusion" ,prelude-and-conclusion ,interp-x86-1)
      ))
