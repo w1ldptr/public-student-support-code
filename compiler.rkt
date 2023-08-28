@@ -172,7 +172,14 @@
            ((uniquify-exp env) te)
            ((uniquify-exp env) ee))]
       [(Prim op es)
-       (Prim op (for/list ([e es]) ((uniquify-exp env) e)))])))
+       (Prim op (for/list ([e es]) ((uniquify-exp env) e)))]
+      [(SetBang var exp)
+       (SetBang (dict-ref env var) ((uniquify-exp env) exp))]
+      [(Begin es lst)
+       (Begin (map (uniquify-exp env) es) ((uniquify-exp env) lst))]
+      [(WhileLoop cnd body)
+       (WhileLoop ((uniquify-exp env) cnd) ((uniquify-exp env) body))]
+      [(Void) (Void)])))
 
 ;; uniquify : Lvar -> Lvar
 (define (uniquify p)
@@ -1033,7 +1040,7 @@
   `(
     ("partial evaluation" ,pe ,interp-Lwhile ,type-check-Lwhile)
     ("shrink" ,shrink ,interp-Lwhile ,type-check-Lwhile)
-    ;; ("uniquify" ,uniquify ,interp-Lif ,type-check-Lif)
+    ("uniquify" ,uniquify ,interp-Lwhile ,type-check-Lwhile)
     ;; ("remove complex opera*" ,remove-complex-opera* ,interp-Lif ,type-check-Lif)
     ;; ("explicate control" ,explicate-control ,interp-Cif ,type-check-Cif)
     ;; ("instruction selection" ,select-instructions ,interp-pseudo-x86-1)
