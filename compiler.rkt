@@ -924,6 +924,9 @@
     [(Prim op le) (Prim op (map shrink-exp le))]
     [(Let rval lval exp) (Let rval (shrink-exp lval) (shrink-exp exp))]
     [(If ce te ee) (If (shrink-exp ce) (shrink-exp te) (shrink-exp ee))]
+    [(SetBang var exp) (SetBang var (shrink-exp exp))]
+    [(Begin le lst) (Begin (map shrink-exp le) (shrink-exp lst))]
+    [(WhileLoop cnd body) (WhileLoop (shrink-exp cnd) (shrink-exp body))]
     [else e]))
 
 (define (shrink p)
@@ -1029,7 +1032,7 @@
 (define compiler-passes
   `(
     ("partial evaluation" ,pe ,interp-Lwhile ,type-check-Lwhile)
-    ;; ("shrink" ,shrink ,interp-Lif ,type-check-Lif)
+    ("shrink" ,shrink ,interp-Lwhile ,type-check-Lwhile)
     ;; ("uniquify" ,uniquify ,interp-Lif ,type-check-Lif)
     ;; ("remove complex opera*" ,remove-complex-opera* ,interp-Lif ,type-check-Lif)
     ;; ("explicate control" ,explicate-control ,interp-Cif ,type-check-Cif)
