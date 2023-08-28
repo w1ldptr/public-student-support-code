@@ -191,6 +191,14 @@
     [(Var x) (values (Var x) '())]
     [(Int n) (values (Int n) '())]
     [(Bool b) (values (Bool b) '())]
+    [(GetBang var)
+     (define symb (gensym 'getbang-atom))
+     (values (Var symb)
+             (list (cons symb e)))]
+    [(SetBang x rhs)
+     (define symb (gensym 'setbang-atom))
+     (values (Void)
+             (list (cons symb (rco-exp e))))]
     [(Let x e body)
      (define-values (atom env) (rco-atom body))
      (values atom
@@ -198,6 +206,14 @@
                    env))]
     [(If ce te ee)
      (define symb (gensym 'if-atom))
+     (values (Var symb)
+             (list (cons symb (rco-exp e))))]
+    [(Begin le lst)
+     (define symb (gensym 'begin-atom))
+     (values (Var symb)
+             (list (cons symb (rco-exp e))))]
+    [(WhileLoop cnd body)
+     (define symb (gensym 'while-atom))
      (values (Var symb)
              (list (cons symb (rco-exp e))))]
     [(Prim op es)
@@ -213,13 +229,20 @@
 
 (define (rco-exp e)
   (match e
+    [(Void) (Void)]
     [(Var x) (Var x)]
     [(Int n) (Int n)]
     [(Bool b) (Bool b)]
+    [(GetBang var) (GetBang var)]
+    [(SetBang x e) (SetBang x (rco-exp e))]
     [(Let x e body)
      (Let x (rco-exp e) (rco-exp body))]
     [(If ce te ee)
      (If (rco-exp ce) (rco-exp te) (rco-exp ee))]
+    [(Begin es lst)
+     (Begin (map rco-exp es) (rco-exp lst))]
+    [(WhileLoop cnd body)
+     (WhileLoop (rco-exp cnd) (rco-exp body))]
     [(Prim op es)
      (define-values (atoms child-envs)
        (for/lists (l1 l2)
@@ -1101,7 +1124,7 @@
     ("shrink" ,shrink ,interp-Lwhile ,type-check-Lwhile)
     ("uniquify" ,uniquify ,interp-Lwhile ,type-check-Lwhile)
     ("uncover get!" ,uncover-get! ,interp-Lwhile ,type-check-Lwhile)
-    ;; ("remove complex opera*" ,remove-complex-opera* ,interp-Lif ,type-check-Lif)
+    ("remove complex opera*" ,remove-complex-opera* ,interp-Lwhile ,type-check-Lwhile)
     ;; ("explicate control" ,explicate-control ,interp-Cif ,type-check-Cif)
     ;; ("instruction selection" ,select-instructions ,interp-pseudo-x86-1)
     ;; ("uncover-live" ,uncover-live ,interp-x86-1)
