@@ -1033,6 +1033,65 @@
     [(X86Program info labels&blocks)
      (X86Program info (remove-jumps-blocks labels&blocks))]))
 
+(define (collect-set! e)
+  (match e
+    [(SetBang var rhs)
+     (set-union (set var) (collect-set! rhs))]
+    [(Begin es lst)
+     (define set-lst (collect-set! lst))
+     (if (empty? es)
+         set-lst
+         (set-union
+          (apply set-union (map collect-set! es))
+          set-lst))]
+    [(WhileLoop cnd body)
+     (set-union (collect-set! cnd) (collect-set! body))]
+    [(Let x rhs body)
+     (set-union (collect-set! rhs) (collect-set! body))]
+    [(If ce te ee)
+     (set-union (collect-set! ce) (collect-set! te) (collect-set! ee))]
+    [(Prim op es)
+     (if (empty? es)
+         (set)
+         (apply set-union (for/list ([e es]) (collect-set! e))))]
+    [else (set)]))
+
+(define (uncover-get!-exp set-vars e)
+  (match e
+    [(Var x)
+     (if (set-member? set-vars x)
+         (GetBang x)
+         (Var x))]
+    [(Int n) (Int n)]
+    [(Bool b) (Bool b)]
+    [(Let x e body)
+     (Let x (uncover-get!-exp set-vars e) (uncover-get!-exp set-vars body))]
+    [(If ce te ee)
+     (If (uncover-get!-exp set-vars ce)
+         (uncover-get!-exp set-vars te)
+         (uncover-get!-exp set-vars ee))]
+    [(Prim op es)
+     (Prim op (for/list ([e es]) (uncover-get!-exp set-vars e)))]
+    [(SetBang var exp)
+     (SetBang var (uncover-get!-exp set-vars exp))]
+    [(Begin es lst)
+     (Begin (for/list ([e es])
+              (uncover-get!-exp set-vars e))
+            (uncover-get!-exp set-vars lst))]
+    [(WhileLoop cnd body)
+     (WhileLoop (uncover-get!-exp set-vars cnd) (uncover-get!-exp set-vars body))]
+    [(Void) (Void)]))
+
+(define (uncover-get!-helper e)
+  (define set-vars (collect-set! e))
+  (displayln "GET! debug")
+  (displayln set-vars)
+  (uncover-get!-exp set-vars e))
+
+(define (uncover-get! p)
+  (match p
+    [(Program info e) (Program info (uncover-get!-helper e))]))
+
 ;; Define the compiler passes to be used by interp-tests and the grader
 ;; Note that your compiler file (the file that defines the passes)
 ;; must be named "compiler.rkt"
@@ -1041,6 +1100,7 @@
     ("partial evaluation" ,pe ,interp-Lwhile ,type-check-Lwhile)
     ("shrink" ,shrink ,interp-Lwhile ,type-check-Lwhile)
     ("uniquify" ,uniquify ,interp-Lwhile ,type-check-Lwhile)
+    ("uncover get!" ,uncover-get! ,interp-Lwhile ,type-check-Lwhile)
     ;; ("remove complex opera*" ,remove-complex-opera* ,interp-Lif ,type-check-Lif)
     ;; ("explicate control" ,explicate-control ,interp-Cif ,type-check-Cif)
     ;; ("instruction selection" ,select-instructions ,interp-pseudo-x86-1)
