@@ -8,12 +8,14 @@
 (require "interp-Lwhile.rkt")
 (require "interp-Cvar.rkt")
 (require "interp-Cif.rkt")
+(require "interp-Cwhile.rkt")
 (require "interp.rkt")
 (require "type-check-Lvar.rkt")
 (require "type-check-Lif.rkt")
 (require "type-check-Lwhile.rkt")
 (require "type-check-Cvar.rkt")
 (require "type-check-Cif.rkt")
+(require "type-check-Cwhile.rkt")
 (require "utilities.rkt")
 (require "priority_queue.rkt")
 (require "multigraph.rkt")
@@ -272,8 +274,15 @@
        (hash-set! basic-blocks label t)
        (Goto label)])))
 
+(define (create-labeled-block tail label)
+  (delay
+    (define t  (force tail))
+    (hash-set! basic-blocks label t)
+    (Goto label)))
+
 (define (explicate-tail e)
   (match e
+    [(GetBang var) (explicate-tail (Var var))]
     [(If ce te ee)
      (define-values (te-cont te-vars) (explicate-tail te))
      (define-values (ee-cont ee-vars) (explicate-tail ee))
@@ -283,10 +292,51 @@
      (define-values (body-cont body-vars) (explicate-tail body))
      (define-values (rhs-cont rhs-vars) (explicate-assign rhs x body-cont))
      (values rhs-cont (append body-vars rhs-vars))]
+    [(Begin es body)
+     (define-values (body-cont body-vars) (explicate-tail body))
+     (for/foldr ([cont-acc body-cont]
+                 [vars-acc body-vars])
+                ([exp es])
+       (define-values (exp-cont exp-vars) (explicate-effect exp cont-acc))
+       (values exp-cont (append vars-acc exp-vars)))]
     [else (values (delay (Return e)) '())]))
+
+(define (explicate-effect e cont)
+  (match e
+    [(SetBang var rhs)
+     (explicate-assign rhs var cont)]
+    [(Let x rhs body)
+     (define-values (body-cont body-vars) (explicate-effect body cont))
+     (define-values (rhs-cont rhs-vars) (explicate-assign rhs x body-cont))
+     (values rhs-cont (append body-vars rhs-vars))]
+    [(If ce te ee)
+     (define block-cont (create-block cont))
+     (define-values (te-cont te-vars) (explicate-effect te block-cont))
+     (define-values (ee-cont ee-vars) (explicate-effect ee block-cont))
+     (define-values (if-cont if-vars) (explicate-pred ce te-cont ee-cont))
+     (values if-cont (append te-vars ee-vars if-vars))]
+    [(Begin es body)
+     (define-values (body-cont body-vars) (explicate-effect body cont))
+     (for/foldr ([cont-acc body-cont]
+                 [vars-acc body-vars])
+                ([exp es])
+       (define-values (exp-cont exp-vars) (explicate-effect exp cont-acc))
+       (values exp-cont (append vars-acc exp-vars)))]
+    [(WhileLoop cnd body)
+     (define loop (gensym 'loop))
+     (define-values (body-cont body-vars) (explicate-effect body
+                                                            (Goto loop)))
+     (define-values (loop-cont loop-vars) (explicate-pred cnd body-cont cont))
+     (values (create-labeled-block loop-cont loop)
+             (append body-vars loop-vars))]
+    [(Prim 'read '())
+     (values (delay (Seq (Prim 'read '()) (force cont))) '())]
+    [else
+     (values cont '())]))
 
 (define (explicate-assign e x cont)
   (match e
+    [(GetBang var) (explicate-assign (Var var) x cont)]
     [(If ce te ee)
      (define block-cont (create-block cont))
      (define-values (te-cont te-vars) (explicate-assign te x block-cont))
@@ -297,10 +347,18 @@
      (define-values (body-cont body-vars) (explicate-assign body x cont))
      (define-values (rhs-cont rhs-vars) (explicate-assign rhs y body-cont))
      (values rhs-cont (append body-vars rhs-vars))]
+    [(Begin es body)
+     (define-values (body-cont body-vars) (explicate-assign body x cont))
+     (for/foldr ([cont-acc body-cont]
+                 [vars-acc body-vars])
+                ([exp es])
+       (define-values (exp-cont exp-vars) (explicate-effect exp cont-acc))
+       (values exp-cont (append vars-acc exp-vars)))]
     [else (values (delay (Seq (Assign (Var x) e) (force cont))) (list x))]))
 
 (define (explicate-pred e tc ec)
   (match e
+    [(GetBang var) (explicate-pred (Var var) tc ec)]
     [(Var _)
      (values (delay (IfStmt (Prim 'eq? (list e (Bool #t)))
                             (force (create-block tc))
@@ -310,6 +368,13 @@
      (define-values (body-cont body-vars) (explicate-pred body tc ec))
      (define-values (rhs-cont rhs-vars) (explicate-assign rhs x body-cont))
      (values rhs-cont (append body-vars rhs-vars))]
+    [(Begin es body)
+     (define-values (body-cont body-vars) (explicate-pred body tc ec))
+     (for/foldr ([cont-acc body-cont]
+                 [vars-acc body-vars])
+                ([exp es])
+       (define-values (exp-cont exp-vars) (explicate-effect exp cont-acc))
+       (values exp-cont (append vars-acc exp-vars)))]
     [(Prim 'not (list e))
      (values (delay (IfStmt (Prim 'eq? (list e (Bool #f)))
                             (force (create-block tc))
@@ -1125,7 +1190,7 @@
     ("uniquify" ,uniquify ,interp-Lwhile ,type-check-Lwhile)
     ("uncover get!" ,uncover-get! ,interp-Lwhile ,type-check-Lwhile)
     ("remove complex opera*" ,remove-complex-opera* ,interp-Lwhile ,type-check-Lwhile)
-    ;; ("explicate control" ,explicate-control ,interp-Cif ,type-check-Cif)
+    ("explicate control" ,explicate-control ,interp-Cwhile ,type-check-Cwhile)
     ;; ("instruction selection" ,select-instructions ,interp-pseudo-x86-1)
     ;; ("uncover-live" ,uncover-live ,interp-x86-1)
     ;; ("build-interference" ,build-interference ,interp-x86-1)
