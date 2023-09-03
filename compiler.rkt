@@ -412,6 +412,7 @@
     [(Var x) e]
     [(Reg r) e]
     [(Bool b) (Imm (if b 1 0))]
+    [(Void) (Imm 0)]
     [else (error "select-atm unhandled case " e)]))
 
 (define (select-stmt-cmp ce)
@@ -461,6 +462,8 @@
     [(Assign dest _)
      (list (Callq 'read_int 0)
            (Instr 'movq (list (Reg 'rax) dest)))]
+    [(Prim 'read '())
+     (list (Callq 'read_int 0))]
     [else (error "select-stmt-read unhandled case " re)]))
 
 (define (select-stmt-not ne)
@@ -526,6 +529,7 @@
      #:when (or (eq? cmp 'eq?) (eq? cmp '<))
      (select-stmt-cond e)]
     [(Assign _ atm) (select-stmt-atm e)]
+    [(Prim 'read '()) (select-stmt-read e)]
     [(Return e) (select-stmt-return e)]
     [else (error "select-stmt unhandled case " e)]))
 
@@ -1191,7 +1195,7 @@
     ("uncover get!" ,uncover-get! ,interp-Lwhile ,type-check-Lwhile)
     ("remove complex opera*" ,remove-complex-opera* ,interp-Lwhile ,type-check-Lwhile)
     ("explicate control" ,explicate-control ,interp-Cwhile ,type-check-Cwhile)
-    ;; ("instruction selection" ,select-instructions ,interp-pseudo-x86-1)
+    ("instruction selection" ,select-instructions ,interp-pseudo-x86-1)
     ;; ("uncover-live" ,uncover-live ,interp-x86-1)
     ;; ("build-interference" ,build-interference ,interp-x86-1)
     ;; ("allocate registers" ,allocate-registers ,interp-x86-1)
