@@ -37,4 +37,5 @@
 ;; test the final x86 code.
 ;; (compiler-tests "var" #f compiler-passes "var_test" (tests-for "var"))
 ;; (compiler-tests "cond" type-check-Lif compiler-passes "cond_test" (tests-for "cond"))
+(compiler-tests "while" type-check-Lwhile compiler-passes "while_test" (tests-for "while"))
 
