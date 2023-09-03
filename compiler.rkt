@@ -2,6 +2,7 @@
 (require racket/set racket/stream)
 (require racket/fixnum racket/promise)
 (require graph)
+(require data/queue)
 (require "interp-Lint.rkt")
 (require "interp-Lvar.rkt")
 (require "interp-Lif.rkt")
@@ -646,7 +647,7 @@
      (X86Program info
                  (cons main (append blocks (list conclusion))))]))
 
-(define (instr-r-set label->live instr)
+(define (instr-r-set instr)
   (match instr
     [(Instr 'movq (list (Reg src) _)) (set (Reg src))]
     [(Instr 'movq (list (Var src) _)) (set (Var src))]
@@ -675,7 +676,6 @@
      (define args (list (Reg 'rdi) (Reg 'rsi) (Reg 'rdx) (Reg 'rcx) (Reg 'r8) (Reg 'r9)))
      (list->set (if (< arity 6) (take args arity) args))]
     [(Retq) (set (Reg 'rax))]
-    [(JmpIf _ label) (dict-ref label->live label)]
     [else (set)]))
 
 (define (instr-w-set instr)
@@ -691,24 +691,6 @@
      (set (Reg 'rax) (Reg 'rcx) (Reg 'rdx) (Reg 'rsi) (Reg 'rdi) (Reg 'r8) (Reg 'r9) (Reg 'r10) (Reg 'r11))]
     [else (set)]))
 
-(define (block-liveness block label->live)
-  (match block
-    [(Block info instr-list)
-     (define initial
-       (match (last instr-list)
-         [(Jmp label) (list (dict-ref label->live label))]
-         [else (list (set))]))
-     (define liveness
-       (for/foldr ([sets initial])
-                  ([instr instr-list])
-         (define Lafter (car sets))
-         (define rset (instr-r-set label->live instr))
-         (define wset (instr-w-set instr))
-         (define Lbefore (set-union rset (set-subtract Lafter wset)))
-         (cons Lbefore sets)))
-     (Block (cons (cons 'live liveness) info)
-            instr-list)]))
-
 (define (build-cfg blocks)
   (define cfg (make-multigraph '()))
   (for ([label&block blocks])
@@ -722,24 +704,61 @@
            [else #f]))]))
   cfg)
 
-(define (compute-ordering cfg)
-  (tsort (transpose cfg)))
+(define (block-transfer blocks blocks-liveness)
+  (lambda (label live-after)
+    (match (dict-ref blocks label)
+      [(Block info instr-list)
+       (define liveness
+         (for/foldr ([sets (list live-after)])
+                    ([instr instr-list])
+           (define Lafter (car sets))
+           (define rset (instr-r-set instr))
+           (define wset (instr-w-set instr))
+           (define Lbefore (set-union rset (set-subtract Lafter wset)))
+           (cons Lbefore sets)))
+       (dict-set! blocks-liveness label liveness)
+       (car liveness)])))
+
+(define (analyze-dataflow cfg transfer bottom join)
+  (define mapping (make-hash))
+  (for ([v (in-vertices cfg)])
+    (dict-set! mapping v bottom))
+  (define worklist (make-queue))
+  (for ([v (in-vertices cfg)])
+    (enqueue! worklist v))
+  (define trans-cfg (transpose cfg))
+  (while (not (queue-empty? worklist))
+    (define node (dequeue! worklist))
+    (define input (for/fold ([state bottom])
+                            ([pred (in-neighbors trans-cfg node)])
+                    (join state (dict-ref mapping pred))))
+    (define output (transfer node input))
+    (cond [(not (equal? output (dict-ref mapping node)))
+           (dict-set! mapping node output)
+           (for ([v (in-neighbors cfg node)])
+             (enqueue! worklist v))]))
+  mapping)
 
 (define (uncover-live-blocks blocks)
-  (define cfg (build-cfg blocks))
-  (define ordered (compute-ordering cfg))
-  (define label->live
-    (make-hash (list (cons 'conclusion
-                           (set (Reg 'rax) (Reg 'rsp))))))
+  (define blocks-with-conclusion
+    (cons (cons 'conclusion (Block '()
+                                   (list (Instr 'cmpq
+                                                (list (Reg 'rsp)
+                                                      (Reg 'rax))))))
+          blocks))
+  (define cfg (build-cfg blocks-with-conclusion))
+  (define blocks-liveness (make-hash))
+  (analyze-dataflow (transpose cfg)
+                    (block-transfer blocks-with-conclusion blocks-liveness)
+                    (set)
+                    set-union)
 
-  (reverse (for/list ([label ordered]
-                      #:when (dict-ref blocks label #f))
-             (define block (dict-ref blocks label))
-             (define new-block-liveness (block-liveness block label->live))
-             (match new-block-liveness
-               [(Block (cons (cons 'live liveness) _) _)
-                (hash-set! label->live label (car liveness))])
-             (cons label new-block-liveness))))
+  (for/list ([block blocks])
+    (match block
+      [(cons label (Block info instrs))
+       (cons label
+             (Block (cons (cons 'live (dict-ref blocks-liveness label)) info)
+                    instrs))])))
 
 (define (uncover-live p)
   (match p
@@ -1196,9 +1215,9 @@
     ("remove complex opera*" ,remove-complex-opera* ,interp-Lwhile ,type-check-Lwhile)
     ("explicate control" ,explicate-control ,interp-Cwhile ,type-check-Cwhile)
     ("instruction selection" ,select-instructions ,interp-pseudo-x86-1)
-    ;; ("uncover-live" ,uncover-live ,interp-x86-1)
-    ;; ("build-interference" ,build-interference ,interp-x86-1)
-    ;; ("allocate registers" ,allocate-registers ,interp-x86-1)
+    ("uncover-live" ,uncover-live ,interp-x86-1)
+    ("build-interference" ,build-interference ,interp-x86-1)
+    ("allocate registers" ,allocate-registers ,interp-x86-1)
     ;; ("remove jumps" ,remove-jumps ,interp-x86-1)
     ;; ("patch instructions" ,patch-instructions ,interp-x86-1)
     ;; ("prelude-and-conclusion" ,prelude-and-conclusion ,interp-x86-1)
